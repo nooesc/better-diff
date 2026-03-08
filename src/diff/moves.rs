@@ -1,6 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::model::{DiffLine, FileDiff, LineKind, MoveMatch};
 
@@ -62,24 +62,24 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
                         current_lines.push(line);
                     } else {
                         // Flush the previous block if it meets the minimum size.
-                        if let Some(kind) = current_kind {
-                            if current_lines.len() >= MIN_BLOCK_SIZE {
-                                blocks.push(build_block(
-                                    &file.path,
-                                    kind,
-                                    &current_lines,
-                                ));
-                            }
+                        if let Some(kind) = current_kind
+                            && current_lines.len() >= MIN_BLOCK_SIZE
+                        {
+                            blocks.push(build_block(
+                                &file.path,
+                                kind,
+                                &current_lines,
+                            ));
                         }
                         current_kind = Some(line.kind);
                         current_lines = vec![line];
                     }
                 } else {
                     // Non-deleted/added line breaks the block.
-                    if let Some(kind) = current_kind {
-                        if current_lines.len() >= MIN_BLOCK_SIZE {
-                            blocks.push(build_block(&file.path, kind, &current_lines));
-                        }
+                    if let Some(kind) = current_kind
+                        && current_lines.len() >= MIN_BLOCK_SIZE
+                    {
+                        blocks.push(build_block(&file.path, kind, &current_lines));
                     }
                     current_kind = None;
                     current_lines.clear();
@@ -87,10 +87,10 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
             }
 
             // Flush any remaining block at end of hunk.
-            if let Some(kind) = current_kind {
-                if current_lines.len() >= MIN_BLOCK_SIZE {
-                    blocks.push(build_block(&file.path, kind, &current_lines));
-                }
+            if let Some(kind) = current_kind
+                && current_lines.len() >= MIN_BLOCK_SIZE
+            {
+                blocks.push(build_block(&file.path, kind, &current_lines));
             }
         }
     }
@@ -99,7 +99,7 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
 }
 
 /// Build a Block from a slice of DiffLines.
-fn build_block(file_path: &PathBuf, kind: LineKind, lines: &[&DiffLine]) -> Block {
+fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
     let text_fn = |line: &DiffLine| -> String {
         let raw = match kind {
             LineKind::Deleted => line.old_text.as_deref().unwrap_or(""),
@@ -123,7 +123,7 @@ fn build_block(file_path: &PathBuf, kind: LineKind, lines: &[&DiffLine]) -> Bloc
     let end_line = line_no_fn(lines[lines.len() - 1]);
 
     Block {
-        file_path: file_path.clone(),
+        file_path: file_path.to_path_buf(),
         kind,
         start_line,
         end_line,
@@ -136,7 +136,7 @@ fn build_block(file_path: &PathBuf, kind: LineKind, lines: &[&DiffLine]) -> Bloc
 ///
 /// A "move" is a deleted block that reappears as an added block (possibly in a different file)
 /// with similarity >= 80%.
-pub fn detect_moves(files: &mut Vec<FileDiff>) {
+pub fn detect_moves(files: &mut [FileDiff]) {
     let blocks = extract_blocks(files);
 
     let deleted_blocks: Vec<&Block> = blocks.iter().filter(|b| b.kind == LineKind::Deleted).collect();

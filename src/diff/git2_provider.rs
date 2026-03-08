@@ -6,6 +6,7 @@ use git2::{Delta, DiffOptions, Repository};
 
 use super::folding::compute_fold_regions;
 use super::model::{DiffLine, DiffMode, FileDiff, FileStatus, Hunk, LineKind};
+use super::moves::detect_moves;
 use super::provider::DiffProvider;
 use super::tokens::compute_token_changes;
 
@@ -133,15 +134,15 @@ impl DiffProvider for Git2Provider {
                 };
 
                 let mut files = raw_files.borrow_mut();
-                if let Some(file) = files.last_mut() {
-                    if let Some(hunk) = file.hunks.last_mut() {
-                        hunk.lines.push(RawLine {
-                            kind,
-                            old_line_no,
-                            new_line_no,
-                            content,
-                        });
-                    }
+                if let Some(file) = files.last_mut()
+                    && let Some(hunk) = file.hunks.last_mut()
+                {
+                    hunk.lines.push(RawLine {
+                        kind,
+                        old_line_no,
+                        new_line_no,
+                        content,
+                    });
                 }
                 true
             }),
@@ -200,7 +201,12 @@ impl DiffProvider for Git2Provider {
 
             // Load file contents
             let old_content = load_old_content(&repo, &raw_file.path).unwrap_or_default();
-            let new_content = load_new_content(&repo, &raw_file.path).unwrap_or_default();
+            let new_content = if mode == DiffMode::Staged && raw_file.status != FileStatus::Deleted
+            {
+                load_staged_content(&repo, &raw_file.path).unwrap_or_default()
+            } else {
+                load_new_content(&repo, &raw_file.path).unwrap_or_default()
+            };
 
             file_diffs.push(FileDiff {
                 path: raw_file.path,
@@ -221,6 +227,9 @@ impl DiffProvider for Git2Provider {
                 file_diff.fold_regions = compute_fold_regions(&file_diff.old_content);
             }
         }
+
+        // Detect moved blocks across files
+        detect_moves(&mut file_diffs);
 
         Ok(file_diffs)
     }
@@ -251,18 +260,64 @@ fn load_new_content(repo: &Repository, path: &Path) -> Result<String> {
     Ok(content)
 }
 
-/// Compute word-level token changes for adjacent Deleted+Added line pairs
-/// in a hunk, promoting them to Modified lines with token details.
+/// Load the staged (index) version of a file from the git index.
+fn load_staged_content(repo: &Repository, path: &Path) -> Result<String> {
+    let index = repo.index().context("Failed to read index")?;
+    let entry = index
+        .get_path(path, 0)
+        .context("File not found in index")?;
+    let blob = repo
+        .find_blob(entry.id)
+        .context("Failed to find blob for index entry")?;
+    let content = std::str::from_utf8(blob.content())
+        .unwrap_or_default()
+        .to_string();
+    Ok(content)
+}
+
+/// Compute word-level token changes for contiguous blocks of Deleted+Added lines
+/// in a hunk, pairing them 1:1 up to min(N, M) and promoting paired lines to Modified.
 fn compute_line_tokens(hunk: &mut Hunk) {
     let len = hunk.lines.len();
     let mut i = 0;
-    while i + 1 < len {
-        if hunk.lines[i].kind == LineKind::Deleted && hunk.lines[i + 1].kind == LineKind::Added {
-            let old_text = hunk.lines[i]
+    while i < len {
+        // Find a contiguous block of Deleted lines
+        if hunk.lines[i].kind != LineKind::Deleted {
+            i += 1;
+            continue;
+        }
+
+        let del_start = i;
+        while i < len && hunk.lines[i].kind == LineKind::Deleted {
+            i += 1;
+        }
+        let del_end = i; // exclusive
+        let del_count = del_end - del_start;
+
+        // Find a contiguous block of Added lines immediately after
+        let add_start = i;
+        while i < len && hunk.lines[i].kind == LineKind::Added {
+            i += 1;
+        }
+        let add_end = i; // exclusive
+        let add_count = add_end - add_start;
+
+        if add_count == 0 {
+            // No added lines following the deleted block; nothing to pair
+            continue;
+        }
+
+        // Pair them 1:1 up to min(del_count, add_count)
+        let pairs = del_count.min(add_count);
+        for p in 0..pairs {
+            let del_idx = del_start + p;
+            let add_idx = add_start + p;
+
+            let old_text = hunk.lines[del_idx]
                 .old_text
                 .clone()
                 .unwrap_or_default();
-            let new_text = hunk.lines[i + 1]
+            let new_text = hunk.lines[add_idx]
                 .new_text
                 .clone()
                 .unwrap_or_default();
@@ -270,20 +325,16 @@ fn compute_line_tokens(hunk: &mut Hunk) {
             let (old_tokens, new_tokens) = compute_token_changes(&old_text, &new_text);
 
             // Promote the deleted line to Modified, storing old-side tokens
-            hunk.lines[i].kind = LineKind::Modified;
-            hunk.lines[i].new_line_no = hunk.lines[i + 1].new_line_no;
-            hunk.lines[i].new_text = Some(new_text);
-            hunk.lines[i].tokens = old_tokens;
+            hunk.lines[del_idx].kind = LineKind::Modified;
+            hunk.lines[del_idx].new_line_no = hunk.lines[add_idx].new_line_no;
+            hunk.lines[del_idx].new_text = Some(new_text.clone());
+            hunk.lines[del_idx].tokens = old_tokens;
 
             // Promote the added line to Modified, storing new-side tokens
-            hunk.lines[i + 1].kind = LineKind::Modified;
-            hunk.lines[i + 1].old_line_no = hunk.lines[i].old_line_no;
-            hunk.lines[i + 1].old_text = Some(old_text);
-            hunk.lines[i + 1].tokens = new_tokens;
-
-            i += 2; // Skip past the pair
-        } else {
-            i += 1;
+            hunk.lines[add_idx].kind = LineKind::Modified;
+            hunk.lines[add_idx].old_line_no = hunk.lines[del_idx].old_line_no;
+            hunk.lines[add_idx].old_text = Some(old_text);
+            hunk.lines[add_idx].tokens = new_tokens;
         }
     }
 }

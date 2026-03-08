@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -57,7 +57,7 @@ fn run_event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     app: &mut App,
     provider: &Git2Provider,
-    repo_path: &PathBuf,
+    repo_path: &Path,
     watch_rx: &crossbeam_channel::Receiver<watcher::WatchEvent>,
 ) -> Result<()> {
     loop {
@@ -80,71 +80,71 @@ fn run_event_loop(
             }
         }
 
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
 
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        app.should_quit = true;
-                    }
-                    KeyCode::Tab => {
-                        app.next_file();
-                    }
-                    KeyCode::BackTab => {
-                        app.prev_file();
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        app.scroll_down();
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        app.scroll_up();
-                    }
-                    KeyCode::Char('n') => {
-                        app.next_hunk();
-                    }
-                    KeyCode::Char('N') => {
-                        app.prev_hunk();
-                    }
-                    KeyCode::Char('s') => {
-                        if app.mode != DiffMode::Staged {
-                            app.mode = DiffMode::Staged;
-                            app.files = provider.compute_diff(repo_path, app.mode)?;
-                            app.active_file = 0;
-                            app.scroll_offset = 0;
-                        }
-                    }
-                    KeyCode::Char('w') => {
-                        if app.mode != DiffMode::WorkingTree {
-                            app.mode = DiffMode::WorkingTree;
-                            app.files = provider.compute_diff(repo_path, app.mode)?;
-                            app.active_file = 0;
-                            app.scroll_offset = 0;
-                        }
-                    }
-                    KeyCode::Char('c') => {
-                        app.cycle_collapse();
-                    }
-                    KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                        let index = (c as usize) - ('1' as usize);
-                        app.select_file(index);
-                    }
-                    _ => {}
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc => {
+                    app.should_quit = true;
                 }
+                KeyCode::Tab => {
+                    app.next_file();
+                }
+                KeyCode::BackTab => {
+                    app.prev_file();
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    app.scroll_down();
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    app.scroll_up();
+                }
+                KeyCode::Char('n') => {
+                    app.next_hunk();
+                }
+                KeyCode::Char('N') => {
+                    app.prev_hunk();
+                }
+                KeyCode::Char('s') => {
+                    if app.mode != DiffMode::Staged {
+                        app.mode = DiffMode::Staged;
+                        app.files = provider.compute_diff(repo_path, app.mode)?;
+                        app.active_file = 0;
+                        app.scroll_offset = 0;
+                    }
+                }
+                KeyCode::Char('w') => {
+                    if app.mode != DiffMode::WorkingTree {
+                        app.mode = DiffMode::WorkingTree;
+                        app.files = provider.compute_diff(repo_path, app.mode)?;
+                        app.active_file = 0;
+                        app.scroll_offset = 0;
+                    }
+                }
+                KeyCode::Char('c') => {
+                    app.cycle_collapse();
+                }
+                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                    let index = (c as usize) - ('1' as usize);
+                    app.select_file(index);
+                }
+                _ => {}
+            }
 
-                if app.should_quit {
-                    return Ok(());
-                }
+            if app.should_quit {
+                return Ok(());
             }
         }
 
         // Clean up completed animations
-        if let Some(ref anim) = app.animation {
-            if anim.is_done() {
-                app.animation = None;
-            }
+        if let Some(ref anim) = app.animation
+            && anim.is_done()
+        {
+            app.animation = None;
         }
     }
 }
