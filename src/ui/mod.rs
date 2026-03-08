@@ -1,3 +1,4 @@
+pub mod minimap;
 pub mod split_pane;
 
 use ratatui::{

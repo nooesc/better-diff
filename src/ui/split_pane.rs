@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::diff::model::{ChangeKind, DiffLine, FileDiff, LineKind};
+use super::minimap::Minimap;
 
 /// Render a side-by-side diff view with the old file on the left and the new file on the right.
 pub fn render_split_pane(
@@ -15,9 +16,12 @@ pub fn render_split_pane(
     file: &FileDiff,
     scroll_offset: usize,
 ) {
-    let [left_area, right_area] =
-        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .areas(area);
+    let [left_area, right_area, minimap_area] = Layout::horizontal([
+        Constraint::Percentage(49),
+        Constraint::Percentage(49),
+        Constraint::Length(2),
+    ])
+    .areas(area);
 
     let (old_lines, new_lines) = build_side_by_side_lines(file);
 
@@ -49,6 +53,12 @@ pub fn render_split_pane(
 
     frame.render_widget(left_paragraph, left_area);
     frame.render_widget(right_paragraph, right_area);
+
+    let visible_height = left_area.height.saturating_sub(2) as usize;
+    frame.render_widget(
+        Minimap::new(file, scroll_offset, visible_height),
+        minimap_area,
+    );
 }
 
 /// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
