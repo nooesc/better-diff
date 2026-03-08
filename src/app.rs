@@ -10,6 +10,7 @@ pub struct App {
     pub scroll_offset: usize,
     pub should_quit: bool,
     pub repo_path: PathBuf,
+    pub animation: Option<crate::ui::animation::AnimationState>,
 }
 
 impl App {
@@ -22,6 +23,7 @@ impl App {
             scroll_offset: 0,
             should_quit: false,
             repo_path,
+            animation: None,
         }
     }
 
@@ -85,6 +87,7 @@ impl App {
             for hunk in &file.hunks {
                 if offset > self.scroll_offset {
                     self.scroll_offset = offset;
+                    self.animation = Some(crate::ui::animation::AnimationState::new(0));
                     return;
                 }
                 offset += hunk.lines.len();
@@ -107,6 +110,7 @@ impl App {
             for &o in offsets.iter().rev() {
                 if o < self.scroll_offset {
                     self.scroll_offset = o;
+                    self.animation = Some(crate::ui::animation::AnimationState::new(0));
                     return;
                 }
             }

@@ -143,5 +143,12 @@ fn run_event_loop(
                 }
             }
         }
+
+        // Clean up completed animations
+        if let Some(ref anim) = app.animation {
+            if anim.is_done() {
+                app.animation = None;
+            }
+        }
     }
 }
