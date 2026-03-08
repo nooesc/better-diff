@@ -6,6 +6,7 @@ use git2::{Delta, DiffOptions, Repository};
 
 use super::model::{DiffLine, DiffMode, FileDiff, FileStatus, Hunk, LineKind};
 use super::provider::DiffProvider;
+use super::tokens::compute_token_changes;
 
 pub struct Git2Provider;
 
@@ -149,7 +150,7 @@ impl DiffProvider for Git2Provider {
         // Build FileDiff structs from raw data, loading file contents
         let mut file_diffs: Vec<FileDiff> = Vec::new();
         for raw_file in raw_files.into_inner() {
-            let hunks: Vec<Hunk> = raw_file
+            let mut hunks: Vec<Hunk> = raw_file
                 .hunks
                 .into_iter()
                 .map(|raw_hunk| {
@@ -190,6 +191,11 @@ impl DiffProvider for Git2Provider {
                     }
                 })
                 .collect();
+
+            // Compute word-level token diffs for adjacent deleted+added pairs
+            for hunk in &mut hunks {
+                compute_line_tokens(hunk);
+            }
 
             // Load file contents
             let old_content = load_old_content(&repo, &raw_file.path).unwrap_or_default();
@@ -233,6 +239,43 @@ fn load_new_content(repo: &Repository, path: &Path) -> Result<String> {
     let content = std::fs::read_to_string(&full_path)
         .with_context(|| format!("Failed to read file: {}", full_path.display()))?;
     Ok(content)
+}
+
+/// Compute word-level token changes for adjacent Deleted+Added line pairs
+/// in a hunk, promoting them to Modified lines with token details.
+fn compute_line_tokens(hunk: &mut Hunk) {
+    let len = hunk.lines.len();
+    let mut i = 0;
+    while i + 1 < len {
+        if hunk.lines[i].kind == LineKind::Deleted && hunk.lines[i + 1].kind == LineKind::Added {
+            let old_text = hunk.lines[i]
+                .old_text
+                .clone()
+                .unwrap_or_default();
+            let new_text = hunk.lines[i + 1]
+                .new_text
+                .clone()
+                .unwrap_or_default();
+
+            let (old_tokens, new_tokens) = compute_token_changes(&old_text, &new_text);
+
+            // Promote the deleted line to Modified, storing old-side tokens
+            hunk.lines[i].kind = LineKind::Modified;
+            hunk.lines[i].new_line_no = hunk.lines[i + 1].new_line_no;
+            hunk.lines[i].new_text = Some(new_text);
+            hunk.lines[i].tokens = old_tokens;
+
+            // Promote the added line to Modified, storing new-side tokens
+            hunk.lines[i + 1].kind = LineKind::Modified;
+            hunk.lines[i + 1].old_line_no = hunk.lines[i].old_line_no;
+            hunk.lines[i + 1].old_text = Some(old_text);
+            hunk.lines[i + 1].tokens = new_tokens;
+
+            i += 2; // Skip past the pair
+        } else {
+            i += 1;
+        }
+    }
 }
 
 #[cfg(test)]
