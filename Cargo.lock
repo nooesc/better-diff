@@ -107,6 +107,7 @@ dependencies = [
  "notify-debouncer-mini",
  "ratatui",
  "similar",
+ "tempfile",
  "tree-sitter",
  "tree-sitter-rust",
 ]
