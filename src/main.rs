@@ -63,12 +63,17 @@ fn run_event_loop(
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
 
-        // Drain file-system watch events and refresh diff
-        while let Ok(_event) = watch_rx.try_recv() {
-            let current_path = app.active_file().map(|f| f.path.clone());
+        // Drain all pending watch events and refresh diff at most once
+        let mut needs_recompute = false;
+        while watch_rx.try_recv().is_ok() {
+            needs_recompute = true;
+        }
+        if needs_recompute {
+            let prev_path = app.active_file().map(|f| f.path.clone());
             app.files = provider.compute_diff(repo_path, app.mode)?;
+            app.render_cache.invalidate();
             // Try to keep the same file selected
-            if let Some(path) = current_path {
+            if let Some(path) = prev_path {
                 let new_index = app
                     .files
                     .iter()
@@ -113,6 +118,7 @@ fn run_event_loop(
                     if app.mode != DiffMode::Staged {
                         app.mode = DiffMode::Staged;
                         app.files = provider.compute_diff(repo_path, app.mode)?;
+                        app.render_cache.invalidate();
                         app.active_file = 0;
                         app.scroll_offset = 0;
                     }
@@ -121,6 +127,7 @@ fn run_event_loop(
                     if app.mode != DiffMode::WorkingTree {
                         app.mode = DiffMode::WorkingTree;
                         app.files = provider.compute_diff(repo_path, app.mode)?;
+                        app.render_cache.invalidate();
                         app.active_file = 0;
                         app.scroll_offset = 0;
                     }

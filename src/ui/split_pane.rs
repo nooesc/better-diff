@@ -12,11 +12,17 @@ use ratatui::{
 use crate::diff::model::{
     ChangeKind, CollapseLevel, DiffLine, FileDiff, FoldRegion, LineKind, MoveMatch,
 };
-use crate::syntax::{HighlightSpan, highlight_rust};
+use crate::syntax::HighlightSpan;
 use crate::ui::animation::AnimationState;
 use super::minimap::Minimap;
 
+const HIDDEN_LABEL_PREFIX: &str = "┈┈┈┈ ";
+const HIDDEN_LABEL_SUFFIX: &str = " ┈┈┈┈";
+const MOVE_BORDER_BOTTOM_WIDE: &str = "└──────────────────────────────────────┘";
+const MOVE_BORDER_BOTTOM_NARROW: &str = "└──────────────────────────────────┘";
+
 /// Render a side-by-side diff view with the old file on the left and the new file on the right.
+#[allow(clippy::too_many_arguments)]
 pub fn render_split_pane(
     frame: &mut Frame,
     area: Rect,
@@ -24,6 +30,8 @@ pub fn render_split_pane(
     scroll_offset: usize,
     collapse_level: CollapseLevel,
     animation: Option<&AnimationState>,
+    old_highlights: &[Vec<HighlightSpan>],
+    new_highlights: &[Vec<HighlightSpan>],
 ) {
     let [left_area, right_area, minimap_area] = Layout::horizontal([
         Constraint::Percentage(49),
@@ -32,24 +40,8 @@ pub fn render_split_pane(
     ])
     .areas(area);
 
-    let is_rust = file
-        .path
-        .extension()
-        .is_some_and(|ext| ext == "rs");
-
-    let old_highlights = if is_rust {
-        highlight_rust(&file.old_content)
-    } else {
-        Vec::new()
-    };
-    let new_highlights = if is_rust {
-        highlight_rust(&file.new_content)
-    } else {
-        Vec::new()
-    };
-
     let (old_lines, new_lines, hunk_start_offsets) =
-        build_side_by_side_lines(file, &old_highlights, &new_highlights, collapse_level);
+        build_side_by_side_lines(file, old_highlights, new_highlights, collapse_level);
 
     let total_lines = old_lines.len();
     let visible_height = left_area.height.saturating_sub(2) as usize; // subtract 2 for borders
@@ -297,7 +289,7 @@ fn build_hunk_lines(
                     && moves.dest_ends.contains_key(&n)
                 {
                     let closing = Line::from(Span::styled(
-                        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}".to_string(),
+                        MOVE_BORDER_BOTTOM_WIDE.to_string(),
                         move_style,
                     ));
                     result.push((empty_line(), closing));
@@ -336,7 +328,7 @@ fn build_hunk_lines(
                     && moves.source_ends.contains_key(&n)
                 {
                     let closing = Line::from(Span::styled(
-                        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}".to_string(),
+                        MOVE_BORDER_BOTTOM_NARROW.to_string(),
                         move_style,
                     ));
                     result.push((closing, empty_line()));
@@ -443,11 +435,11 @@ fn make_gap_label(
             .min_by_key(|r| r.old_end - r.old_start);
 
         if let Some(region) = best {
-            return format!("┈┈┈┈ {} ┈┈┈┈", region.label);
+            return format!("{}{}{}", HIDDEN_LABEL_PREFIX, region.label, HIDDEN_LABEL_SUFFIX);
         }
     }
 
-    format!("┈┈┈┈ {} lines hidden ┈┈┈┈", gap_lines)
+    format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, gap_lines, HIDDEN_LABEL_SUFFIX)
 }
 
 /// Collapse runs of context lines within a hunk that fall entirely inside a fold region.
@@ -546,12 +538,12 @@ fn collapse_context_in_hunk(
                     .min_by_key(|r| r.old_end - r.old_start);
 
                 if let Some(region) = best {
-                    format!("┈┈┈┈ {} ┈┈┈┈", region.label)
+                    format!("{}{}{}", HIDDEN_LABEL_PREFIX, region.label, HIDDEN_LABEL_SUFFIX)
                 } else {
-                    format!("┈┈┈┈ {} lines hidden ┈┈┈┈", run_count)
+                    format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, run_count, HIDDEN_LABEL_SUFFIX)
                 }
             } else {
-                format!("┈┈┈┈ {} lines hidden ┈┈┈┈", run_count)
+                format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, run_count, HIDDEN_LABEL_SUFFIX)
             };
 
             let marker_old = Line::from(Span::styled(label.clone(), fold_style));
@@ -1037,7 +1029,6 @@ mod tests {
             old_end: 19,  // 0-indexed
             new_start: 2,
             new_end: 19,
-            is_collapsed: false,
         });
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
@@ -1131,8 +1122,7 @@ mod tests {
                 old_end: 34,
                 new_start: 5,
                 new_end: 34,
-                is_collapsed: false,
-            }],
+                }],
             move_matches: vec![],
         };
 
@@ -1180,7 +1170,6 @@ mod tests {
             old_end: 22,
             new_start: 3,
             new_end: 22,
-            is_collapsed: false,
         }];
         // gap_old_start=5 (1-indexed), gap_old_end=19 (1-indexed)
         // -> gap_start_0=4, gap_end_0=18 -- both inside [3..22]

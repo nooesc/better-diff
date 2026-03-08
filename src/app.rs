@@ -1,6 +1,38 @@
 use std::path::PathBuf;
 
 use crate::diff::model::{CollapseLevel, DiffMode, FileDiff};
+use crate::syntax::HighlightSpan;
+
+/// Cached syntax highlights for a single file, keyed by file index.
+pub struct RenderCache {
+    /// The file index these highlights were computed for.
+    pub cached_file_index: Option<usize>,
+    pub old_highlights: Vec<Vec<HighlightSpan>>,
+    pub new_highlights: Vec<Vec<HighlightSpan>>,
+}
+
+impl RenderCache {
+    pub fn new() -> Self {
+        Self {
+            cached_file_index: None,
+            old_highlights: Vec::new(),
+            new_highlights: Vec::new(),
+        }
+    }
+
+    /// Invalidate the cache so highlights are recomputed on next render.
+    pub fn invalidate(&mut self) {
+        self.cached_file_index = None;
+        self.old_highlights.clear();
+        self.new_highlights.clear();
+    }
+}
+
+impl Default for RenderCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub struct App {
     pub mode: DiffMode,
@@ -11,6 +43,7 @@ pub struct App {
     pub should_quit: bool,
     pub repo_path: PathBuf,
     pub animation: Option<crate::ui::animation::AnimationState>,
+    pub render_cache: RenderCache,
 }
 
 impl App {
@@ -24,6 +57,7 @@ impl App {
             should_quit: false,
             repo_path,
             animation: None,
+            render_cache: RenderCache::new(),
         }
     }
 
@@ -87,7 +121,7 @@ impl App {
             for hunk in &file.hunks {
                 if offset > self.scroll_offset {
                     self.scroll_offset = offset;
-                    self.animation = Some(crate::ui::animation::AnimationState::new(0));
+                    self.animation = Some(crate::ui::animation::AnimationState::new());
                     return;
                 }
                 offset += hunk.lines.len();
@@ -110,7 +144,7 @@ impl App {
             for &o in offsets.iter().rev() {
                 if o < self.scroll_offset {
                     self.scroll_offset = o;
-                    self.animation = Some(crate::ui::animation::AnimationState::new(0));
+                    self.animation = Some(crate::ui::animation::AnimationState::new());
                     return;
                 }
             }

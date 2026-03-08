@@ -1,6 +1,7 @@
-use tree_sitter::{Parser, TreeCursor};
+use tree_sitter::TreeCursor;
 
 use super::model::{FoldKind, FoldRegion};
+use crate::syntax::parse_rust;
 
 /// Compute fold regions from Rust source code using tree-sitter AST analysis.
 ///
@@ -8,14 +9,7 @@ use super::model::{FoldKind, FoldRegion};
 /// structs, enums) that span more than 3 lines. Returns a list of `FoldRegion`
 /// values with descriptive labels.
 pub fn compute_fold_regions(source: &str) -> Vec<FoldRegion> {
-    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .expect("Failed to set Rust language");
-
-    let tree = match parser.parse(source, None) {
+    let tree = match parse_rust(source) {
         Some(tree) => tree,
         None => return Vec::new(),
     };
@@ -90,7 +84,6 @@ fn collect_fold_regions(cursor: &mut TreeCursor, source: &str, regions: &mut Vec
                     old_end: end_line,
                     new_start: start_line,
                     new_end: end_line,
-                    is_collapsed: false,
                 });
             }
         }

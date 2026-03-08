@@ -269,9 +269,7 @@ fn load_staged_content(repo: &Repository, path: &Path) -> Result<String> {
     let blob = repo
         .find_blob(entry.id)
         .context("Failed to find blob for index entry")?;
-    let content = std::str::from_utf8(blob.content())
-        .unwrap_or_default()
-        .to_string();
+    let content = String::from_utf8_lossy(blob.content()).into_owned();
     Ok(content)
 }
 

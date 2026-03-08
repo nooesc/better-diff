@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use ratatui::style::{Color, Style};
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
@@ -6,6 +8,47 @@ pub struct HighlightSpan {
     pub start: usize, // byte offset within line
     pub end: usize,   // byte offset within line
     pub style: Style,
+}
+
+const QUERY_SOURCE: &str = r#"
+    (line_comment) @comment
+    (block_comment) @comment
+    (string_literal) @string
+    (raw_string_literal) @string
+    (char_literal) @string
+    (integer_literal) @number
+    (float_literal) @number
+    (boolean_literal) @boolean
+    (type_identifier) @type
+    (primitive_type) @type
+    (self) @keyword
+    (mutable_specifier) @keyword
+    (crate) @keyword
+    (super) @keyword
+    ["fn" "let" "pub" "use" "mod" "struct" "enum" "impl" "trait" "for" "while" "loop" "if" "else" "match" "return" "async" "await" "move" "ref" "where" "type" "const" "static" "unsafe" "extern" "as" "in" "break" "continue" "dyn"] @keyword
+    (function_item name: (identifier) @function)
+    (call_expression function: (identifier) @function_call)
+    (macro_invocation macro: (identifier) @macro)
+"#;
+
+fn rust_query() -> &'static Query {
+    static QUERY: OnceLock<Query> = OnceLock::new();
+    QUERY.get_or_init(|| {
+        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+        Query::new(&language, QUERY_SOURCE).expect("Failed to compile highlight query")
+    })
+}
+
+/// Parse Rust source code using tree-sitter and return the syntax tree.
+///
+/// Returns `None` if parsing fails.
+pub fn parse_rust(source: &str) -> Option<tree_sitter::Tree> {
+    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
+    let mut parser = Parser::new();
+    if parser.set_language(&language).is_err() {
+        return None;
+    }
+    parser.parse(source, None)
 }
 
 /// Map a capture name to a syntax highlighting style.
@@ -52,49 +95,17 @@ pub fn highlight_rust(source: &str) -> Vec<Vec<HighlightSpan>> {
     let num_lines = line_starts.len(); // accounts for trailing content after last \n
     let mut result: Vec<Vec<HighlightSpan>> = vec![Vec::new(); num_lines];
 
-    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language)
-        .expect("Failed to set Rust language");
-
-    let tree = match parser.parse(source, None) {
+    let tree = match parse_rust(source) {
         Some(tree) => tree,
         None => return result,
     };
 
-    let query_source = r#"
-        (line_comment) @comment
-        (block_comment) @comment
-        (string_literal) @string
-        (raw_string_literal) @string
-        (char_literal) @string
-        (integer_literal) @number
-        (float_literal) @number
-        (boolean_literal) @boolean
-        (type_identifier) @type
-        (primitive_type) @type
-        (self) @keyword
-        (mutable_specifier) @keyword
-        (crate) @keyword
-        (super) @keyword
-        ["fn" "let" "pub" "use" "mod" "struct" "enum" "impl" "trait" "for" "while" "loop" "if" "else" "match" "return" "async" "await" "move" "ref" "where" "type" "const" "static" "unsafe" "extern" "as" "in" "break" "continue" "dyn"] @keyword
-        (function_item name: (identifier) @function)
-        (call_expression function: (identifier) @function_call)
-        (macro_invocation macro: (identifier) @macro)
-    "#;
-
-    let query = match Query::new(&language, query_source) {
-        Ok(q) => q,
-        Err(_) => return result,
-    };
-
+    let query = rust_query();
     let capture_names = query.capture_names();
     let root = tree.root_node();
 
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, root, source.as_bytes());
+    let mut matches = cursor.matches(query, root, source.as_bytes());
 
     while let Some(m) = {
         matches.advance();

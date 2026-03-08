@@ -4,15 +4,19 @@ use std::time::{Duration, Instant};
 pub struct AnimationState {
     pub started_at: Instant,
     pub duration: Duration,
-    pub hunk_index: usize,
+}
+
+impl Default for AnimationState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnimationState {
-    pub fn new(hunk_index: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             started_at: Instant::now(),
             duration: Duration::from_millis(150),
-            hunk_index,
         }
     }
 
@@ -46,14 +50,14 @@ mod tests {
 
     #[test]
     fn test_animation_progress() {
-        let anim = AnimationState::new(0);
+        let anim = AnimationState::new();
         assert!(anim.progress() < 0.5);
         assert!(!anim.is_done());
     }
 
     #[test]
     fn test_animation_completes() {
-        let mut anim = AnimationState::new(0);
+        let mut anim = AnimationState::new();
         anim.duration = Duration::from_millis(10);
         thread::sleep(Duration::from_millis(20));
         assert!(anim.is_done());

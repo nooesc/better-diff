@@ -12,8 +12,9 @@ use ratatui::{
 
 use crate::app::App;
 use crate::diff::model::DiffMode;
+use crate::syntax::highlight_rust;
 
-pub fn render(frame: &mut Frame, app: &App) {
+pub fn render(frame: &mut Frame, app: &mut App) {
     let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
@@ -62,8 +63,37 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(mode_line), mode_area);
 
     // --- Content area ---
+    // Populate syntax highlight cache if needed
+    if app.render_cache.cached_file_index != Some(app.active_file) {
+        if let Some(file) = app.files.get(app.active_file) {
+            let is_rust = file.path.extension().is_some_and(|ext| ext == "rs");
+            app.render_cache.old_highlights = if is_rust {
+                highlight_rust(&file.old_content)
+            } else {
+                Vec::new()
+            };
+            app.render_cache.new_highlights = if is_rust {
+                highlight_rust(&file.new_content)
+            } else {
+                Vec::new()
+            };
+            app.render_cache.cached_file_index = Some(app.active_file);
+        } else {
+            app.render_cache.invalidate();
+        }
+    }
+
     if let Some(file) = app.active_file() {
-        split_pane::render_split_pane(frame, content_area, file, app.scroll_offset, app.collapse_level, app.animation.as_ref());
+        split_pane::render_split_pane(
+            frame,
+            content_area,
+            file,
+            app.scroll_offset,
+            app.collapse_level,
+            app.animation.as_ref(),
+            &app.render_cache.old_highlights,
+            &app.render_cache.new_highlights,
+        );
     } else {
         let content = Paragraph::new("No changes to display").block(
             Block::default()

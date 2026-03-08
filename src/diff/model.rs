@@ -73,7 +73,6 @@ pub struct FoldRegion {
     pub old_end: usize,
     pub new_start: usize,
     pub new_end: usize,
-    pub is_collapsed: bool,
 }
 
 #[derive(Debug, Clone)]
