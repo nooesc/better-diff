@@ -24,9 +24,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .areas(frame.area());
 
     // --- Tab bar ---
+    let header_bg = Color::Rgb(40, 40, 40);
+    let header_fg = Color::Rgb(160, 160, 160);
     if app.files.is_empty() {
-        let no_changes = Paragraph::new("No changes detected")
-            .style(Style::default().fg(Color::DarkGray));
+        let no_changes = Paragraph::new(" No changes detected")
+            .style(Style::default().fg(header_fg).bg(header_bg));
         frame.render_widget(no_changes, tab_area);
     } else {
         let titles: Vec<String> = app
@@ -41,26 +43,31 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .collect();
         let tabs = Tabs::new(titles)
             .select(app.active_file)
+            .style(Style::default().fg(header_fg).bg(header_bg))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::Rgb(255, 255, 255))
+                    .bg(header_bg)
                     .add_modifier(Modifier::BOLD),
             )
-            .divider("|");
+            .divider("│");
         frame.render_widget(tabs, tab_area);
     }
 
     // --- Mode indicator ---
     let mode_label = match app.mode {
-        DiffMode::WorkingTree => "[Working Tree]",
-        DiffMode::Staged => "[Staged]",
+        DiffMode::WorkingTree => " [Working Tree]",
+        DiffMode::Staged => " [Staged]",
     };
     let file_count = format!("  {} file(s)", app.files.len());
     let mode_line = Line::from(vec![
-        Span::styled(mode_label, Style::default().fg(Color::Cyan)),
-        Span::raw(file_count),
+        Span::styled(mode_label, Style::default().fg(Color::Rgb(80, 200, 220)).bg(header_bg)),
+        Span::styled(file_count, Style::default().fg(header_fg).bg(header_bg)),
     ]);
-    frame.render_widget(Paragraph::new(mode_line), mode_area);
+    frame.render_widget(
+        Paragraph::new(mode_line).style(Style::default().bg(header_bg)),
+        mode_area,
+    );
 
     // --- Content area ---
     // Populate syntax highlight cache if needed
@@ -104,22 +111,25 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // --- Status bar ---
+    let bar_bg = Color::Rgb(30, 30, 30);
+    let key_fg = Color::Rgb(255, 200, 60);
+    let text_fg = Color::Rgb(180, 180, 180);
     let status_line = Line::from(vec![
-        Span::styled("[q]", Style::default().fg(Color::Yellow)),
-        Span::raw("uit "),
-        Span::styled("[Tab]", Style::default().fg(Color::Yellow)),
-        Span::raw(" next file "),
-        Span::styled("[s]", Style::default().fg(Color::Yellow)),
-        Span::raw("taged "),
-        Span::styled("[w]", Style::default().fg(Color::Yellow)),
-        Span::raw("orking tree "),
-        Span::styled("[n/N]", Style::default().fg(Color::Yellow)),
-        Span::raw(" hunks "),
-        Span::styled("[c]", Style::default().fg(Color::Yellow)),
-        Span::raw("ollapse"),
+        Span::styled(" [q]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled("uit ", Style::default().fg(text_fg).bg(bar_bg)),
+        Span::styled("[Tab]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled(" next file ", Style::default().fg(text_fg).bg(bar_bg)),
+        Span::styled("[s]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled("taged ", Style::default().fg(text_fg).bg(bar_bg)),
+        Span::styled("[w]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled("orking tree ", Style::default().fg(text_fg).bg(bar_bg)),
+        Span::styled("[n/N]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled(" hunks ", Style::default().fg(text_fg).bg(bar_bg)),
+        Span::styled("[c]", Style::default().fg(key_fg).bg(bar_bg)),
+        Span::styled("ollapse", Style::default().fg(text_fg).bg(bar_bg)),
     ]);
     frame.render_widget(
-        Paragraph::new(status_line).style(Style::default().bg(Color::DarkGray)),
+        Paragraph::new(status_line).style(Style::default().fg(text_fg).bg(bar_bg)),
         status_area,
     );
 }
