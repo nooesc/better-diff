@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::Path;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -6,8 +9,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::diff::model::{ChangeKind, CollapseLevel, DiffLine, FileDiff, FoldRegion, LineKind};
+use crate::diff::model::{
+    ChangeKind, CollapseLevel, DiffLine, FileDiff, FoldRegion, LineKind, MoveMatch,
+};
 use crate::syntax::{HighlightSpan, highlight_rust};
+use crate::ui::animation::AnimationState;
 use super::minimap::Minimap;
 
 /// Render a side-by-side diff view with the old file on the left and the new file on the right.
@@ -17,6 +23,7 @@ pub fn render_split_pane(
     file: &FileDiff,
     scroll_offset: usize,
     collapse_level: CollapseLevel,
+    animation: Option<&AnimationState>,
 ) {
     let [left_area, right_area, minimap_area] = Layout::horizontal([
         Constraint::Percentage(49),
@@ -41,22 +48,48 @@ pub fn render_split_pane(
         Vec::new()
     };
 
-    let (old_lines, new_lines) =
+    let (old_lines, new_lines, hunk_start_offsets) =
         build_side_by_side_lines(file, &old_highlights, &new_highlights, collapse_level);
 
+    let total_lines = old_lines.len();
     let visible_height = left_area.height.saturating_sub(2) as usize; // subtract 2 for borders
 
-    let old_visible: Vec<Line> = old_lines
+    let mut old_visible: Vec<Line> = old_lines
         .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
         .collect();
 
-    let new_visible: Vec<Line> = new_lines
+    let mut new_visible: Vec<Line> = new_lines
         .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
         .collect();
+
+    // Apply hunk flash animation if active
+    if let Some(anim) = animation {
+        let flash_intensity = ((1.0 - anim.progress()) * 40.0) as u8;
+        if flash_intensity > 0 {
+            // Find the first hunk that starts at or after scroll_offset
+            let (hunk_start, hunk_end) = find_current_hunk_range(
+                &hunk_start_offsets,
+                total_lines,
+                scroll_offset,
+            );
+            // Convert absolute line indices to visible-window-relative indices
+            let vis_start = hunk_start.saturating_sub(scroll_offset);
+            let vis_end = hunk_end.saturating_sub(scroll_offset).min(visible_height);
+
+            for i in vis_start..vis_end {
+                if i < old_visible.len() {
+                    old_visible[i] = apply_flash_to_line(old_visible[i].clone(), flash_intensity);
+                }
+                if i < new_visible.len() {
+                    new_visible[i] = apply_flash_to_line(new_visible[i].clone(), flash_intensity);
+                }
+            }
+        }
+    }
 
     let file_path = file.path.to_string_lossy().to_string();
 
@@ -81,14 +114,18 @@ pub fn render_split_pane(
 }
 
 /// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
+///
+/// Returns `(old_lines, new_lines, hunk_start_offsets)` where `hunk_start_offsets[i]` is
+/// the index into the output lines where hunk `i` begins (at its `@@` header line).
 fn build_side_by_side_lines(
     file: &FileDiff,
     old_highlights: &[Vec<HighlightSpan>],
     new_highlights: &[Vec<HighlightSpan>],
     collapse_level: CollapseLevel,
-) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
+) -> (Vec<Line<'static>>, Vec<Line<'static>>, Vec<usize>) {
     let mut old_lines: Vec<Line<'static>> = Vec::new();
     let mut new_lines: Vec<Line<'static>> = Vec::new();
+    let mut hunk_start_offsets: Vec<usize> = Vec::new();
 
     let fold_style = Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
 
@@ -111,6 +148,9 @@ fn build_side_by_side_lines(
                 new_lines.push(Line::from(Span::styled(label, fold_style)));
             }
         }
+
+        // Record the start offset for this hunk (at its header line)
+        hunk_start_offsets.push(old_lines.len());
 
         // Hunk header line on both sides
         let header = format!(
@@ -145,7 +185,7 @@ fn build_side_by_side_lines(
         }
     }
 
-    (old_lines, new_lines)
+    (old_lines, new_lines, hunk_start_offsets)
 }
 
 /// Build the rendered line pairs for a single hunk (without collapsing).
@@ -411,6 +451,73 @@ fn collapse_context_in_hunk(
     }
 
     result
+}
+
+/// Find the range of output lines belonging to the first hunk at or after `scroll_offset`.
+///
+/// Returns `(start, end)` as absolute indices into the output line list (end is exclusive).
+fn find_current_hunk_range(
+    hunk_start_offsets: &[usize],
+    total_lines: usize,
+    scroll_offset: usize,
+) -> (usize, usize) {
+    // Find the first hunk whose start offset >= scroll_offset,
+    // or failing that, the last hunk whose start is before scroll_offset
+    // (i.e., the hunk the user is currently scrolled into).
+    let mut best_idx = None;
+    for (i, &start) in hunk_start_offsets.iter().enumerate() {
+        if start >= scroll_offset {
+            best_idx = Some(i);
+            break;
+        }
+    }
+    // If no hunk starts at or after scroll_offset, pick the last hunk
+    // (the user is scrolled into it).
+    if best_idx.is_none() && !hunk_start_offsets.is_empty() {
+        best_idx = Some(hunk_start_offsets.len() - 1);
+    }
+
+    match best_idx {
+        Some(idx) => {
+            let start = hunk_start_offsets[idx];
+            let end = if idx + 1 < hunk_start_offsets.len() {
+                hunk_start_offsets[idx + 1]
+            } else {
+                total_lines
+            };
+            (start, end)
+        }
+        None => (0, 0), // no hunks
+    }
+}
+
+/// Apply a flash highlight to a single `Line` by brightening all RGB background colors.
+///
+/// Adds `intensity` to each RGB channel of any background color, clamped to 255.
+/// Non-RGB background colors get a subtle grey background overlay.
+fn apply_flash_to_line(line: Line<'static>, intensity: u8) -> Line<'static> {
+    let new_spans: Vec<Span<'static>> = line
+        .spans
+        .into_iter()
+        .map(|span| {
+            let style = span.style;
+            let new_bg = match style.bg {
+                Some(Color::Rgb(r, g, b)) => Some(Color::Rgb(
+                    r.saturating_add(intensity),
+                    g.saturating_add(intensity),
+                    b.saturating_add(intensity),
+                )),
+                Some(other) => Some(other), // keep non-RGB backgrounds as-is
+                None => Some(Color::Rgb(intensity, intensity, intensity)),
+            };
+            let new_style = Style {
+                bg: new_bg,
+                ..style
+            };
+            Span::styled(span.content, new_style)
+        })
+        .collect();
+    Line::from(new_spans)
 }
 
 /// Build the left (old) side line for a Modified line with token-level highlighting.
@@ -683,7 +790,7 @@ mod tests {
     fn test_build_side_by_side_basic() {
         let file = make_test_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Should have: 1 hunk header + 1 context + 1 deleted + 1 added = 4 lines each
         assert_eq!(old.len(), 4, "Expected 4 old lines, got {}", old.len());
@@ -694,7 +801,7 @@ mod tests {
     fn test_build_side_by_side_modified_pair() {
         let file = make_modified_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Should have: 1 hunk header + 1 modified line = 2 lines each
         assert_eq!(old.len(), 2, "Expected 2 old lines, got {}", old.len());
@@ -721,7 +828,7 @@ mod tests {
             move_matches: vec![],
         };
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
         assert!(old.is_empty());
         assert!(new.is_empty());
     }
@@ -792,7 +899,7 @@ mod tests {
     fn test_tight_mode_shows_gap_marker_between_hunks() {
         let file = make_two_hunk_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Tight);
+        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Tight);
 
         // Gap between hunks: old_start(1) + old_lines(2) = 3, next hunk starts at 20
         // So gap = 20 - 3 = 17 lines hidden.
@@ -824,7 +931,7 @@ mod tests {
         });
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, _new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
+        let (old, _new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
 
         // The gap marker should use the fold label
         let gap_text = old[3].to_string();
@@ -839,7 +946,7 @@ mod tests {
     fn test_expanded_mode_no_gap_markers() {
         let file = make_two_hunk_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Expanded: no gap markers — just header + lines for each hunk
         // hunk1: header + 2 lines = 3, hunk2: header + 2 lines = 3, total = 6
@@ -920,10 +1027,10 @@ mod tests {
         };
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, _new) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
+        let (old, _new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
 
         // In Expanded mode this would be: 1 header + 11 lines = 12
-        let (old_expanded, _) =
+        let (old_expanded, _, _) =
             build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
         assert_eq!(old_expanded.len(), 12);
 
