@@ -46,6 +46,16 @@ pub struct DiffLine {
     pub tokens: Vec<TokenChange>,
 }
 
+impl DiffLine {
+    pub fn old_str(&self) -> &str {
+        self.old_text.as_deref().unwrap_or("")
+    }
+
+    pub fn new_str(&self) -> &str {
+        self.new_text.as_deref().unwrap_or("")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Hunk {
     pub old_start: usize,
@@ -71,8 +81,6 @@ pub struct FoldRegion {
     pub label: String,
     pub old_start: usize,
     pub old_end: usize,
-    pub new_start: usize,
-    pub new_end: usize,
 }
 
 #[derive(Debug, Clone)]

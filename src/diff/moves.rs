@@ -19,10 +19,9 @@ fn hash_line(line: &str) -> u64 {
     hasher.finish()
 }
 
-/// Compute similarity between a pre-hashed block and another block of raw normalized lines.
+/// Compute similarity between two pre-hashed blocks.
 /// Returns the fraction of matching lines (by hash) over the length of the longer block.
-fn block_similarity(hashed: &[u64], other_lines: &[String]) -> f64 {
-    let other_hashed: Vec<u64> = other_lines.iter().map(|l| hash_line(l)).collect();
+fn block_similarity(hashed: &[u64], other_hashed: &[u64]) -> f64 {
     let max_len = hashed.len().max(other_hashed.len());
     if max_len == 0 {
         return 0.0;
@@ -43,7 +42,6 @@ struct Block {
     /// The line numbers in the block (old_line_no for Deleted, new_line_no for Added).
     start_line: usize,
     end_line: usize,
-    normalized: Vec<String>,
     hashed: Vec<u64>,
 }
 
@@ -102,8 +100,8 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
 fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
     let text_fn = |line: &DiffLine| -> String {
         let raw = match kind {
-            LineKind::Deleted => line.old_text.as_deref().unwrap_or(""),
-            LineKind::Added => line.new_text.as_deref().unwrap_or(""),
+            LineKind::Deleted => line.old_str(),
+            LineKind::Added => line.new_str(),
             _ => "",
         };
         normalize(raw)
@@ -117,8 +115,7 @@ fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
         }
     };
 
-    let normalized: Vec<String> = lines.iter().map(|l| text_fn(l)).collect();
-    let hashed: Vec<u64> = normalized.iter().map(|l| hash_line(l)).collect();
+    let hashed: Vec<u64> = lines.iter().map(|l| hash_line(&text_fn(l))).collect();
     let start_line = line_no_fn(lines[0]);
     let end_line = line_no_fn(lines[lines.len() - 1]);
 
@@ -127,7 +124,6 @@ fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
         kind,
         start_line,
         end_line,
-        normalized,
         hashed,
     }
 }
@@ -153,7 +149,7 @@ pub fn detect_moves(files: &mut [FileDiff]) {
             if used_added[i] {
                 continue;
             }
-            let sim = block_similarity(&del.hashed, &add.normalized);
+            let sim = block_similarity(&del.hashed, &add.hashed);
             if sim >= SIMILARITY_THRESHOLD && sim > best_sim {
                 best_sim = sim;
                 best_idx = Some(i);
@@ -206,7 +202,7 @@ mod tests {
         ];
         let normalized: Vec<String> = lines.iter().map(|l| normalize(l)).collect();
         let hashed: Vec<u64> = normalized.iter().map(|l| hash_line(l)).collect();
-        let sim = block_similarity(&hashed, &normalized);
+        let sim = block_similarity(&hashed, &hashed);
         assert!((sim - 1.0).abs() < f64::EPSILON);
     }
 

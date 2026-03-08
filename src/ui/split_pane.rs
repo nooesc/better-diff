@@ -98,7 +98,6 @@ pub fn render_split_pane(
     frame.render_widget(left_paragraph, left_area);
     frame.render_widget(right_paragraph, right_area);
 
-    let visible_height = left_area.height.saturating_sub(2) as usize;
     frame.render_widget(
         Minimap::new(file, scroll_offset, visible_height),
         minimap_area,
@@ -231,7 +230,7 @@ fn build_hunk_lines(
         match line.kind {
             LineKind::Context => {
                 let line_no = format_line_no(line.old_line_no);
-                let text = line.old_text.as_deref().unwrap_or("");
+                let text = line.old_str();
 
                 let mut old_spans = vec![
                     Span::styled(line_no, Style::default().fg(Color::DarkGray)),
@@ -263,7 +262,7 @@ fn build_hunk_lines(
                 if let Some(n) = line.new_line_no
                     && let Some(m) = moves.dest_starts.get(&n)
                 {
-                    let label = move_from_label(m, moves.current_file);
+                    let label = move_label("from", &m.source_file, m.source_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
                     result.push((empty_line(), annotation));
                 }
@@ -271,7 +270,7 @@ fn build_hunk_lines(
                 let old_line = empty_line();
 
                 let line_no = format_line_no(line.new_line_no);
-                let text = line.new_text.as_deref().unwrap_or("");
+                let text = line.new_str();
                 let new_line = Line::from(vec![
                     Span::styled(line_no, Style::default().fg(Color::DarkGray)),
                     Span::styled(
@@ -303,13 +302,13 @@ fn build_hunk_lines(
                 if let Some(n) = line.old_line_no
                     && let Some(m) = moves.source_starts.get(&n)
                 {
-                    let label = move_to_label(m, moves.current_file);
+                    let label = move_label("to", &m.dest_file, m.dest_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
                     result.push((annotation, empty_line()));
                 }
 
                 let line_no = format_line_no(line.old_line_no);
-                let text = line.old_text.as_deref().unwrap_or("");
+                let text = line.old_str();
                 let old_line = Line::from(vec![
                     Span::styled(line_no, Style::default().fg(Color::DarkGray)),
                     Span::styled(
@@ -344,16 +343,16 @@ fn build_hunk_lines(
                     let old_mod_line = &hunk.lines[i];
                     let new_mod_line = &hunk.lines[i + 1];
 
-                    let old_line = build_token_line_old(old_mod_line);
-                    let new_line = build_token_line_new(new_mod_line);
+                    let old_line = build_token_line(old_mod_line, Side::Old);
+                    let new_line = build_token_line(new_mod_line, Side::New);
 
                     result.push((old_line, new_line));
                     i += 2;
                 } else {
                     let old_line_no = format_line_no(line.old_line_no);
-                    let old_text = line.old_text.as_deref().unwrap_or("");
+                    let old_text = line.old_str();
                     let new_line_no = format_line_no(line.new_line_no);
-                    let new_text = line.new_text.as_deref().unwrap_or("");
+                    let new_text = line.new_str();
 
                     let old_line = Line::from(vec![
                         Span::styled(old_line_no, Style::default().fg(Color::DarkGray)),
@@ -380,36 +379,31 @@ fn build_hunk_lines(
     result
 }
 
-/// Build the "moved to" annotation label for deleted lines (source side of a move).
-fn move_to_label(m: &MoveMatch, current_file: &Path) -> String {
-    if m.dest_file != current_file {
-        let dest = m.dest_file.to_string_lossy();
+/// Build a move annotation label ("moved to" or "moved from").
+fn move_label(direction: &str, file: &Path, line: usize, current_file: &Path) -> String {
+    if file != current_file {
         format!(
-            "\u{250c}\u{2500}\u{2500}\u{2500} moved to {}:{} \u{2500}\u{2500}\u{2500}\u{2510}",
-            dest, m.dest_start
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved {direction} {}:{line} \u{2500}\u{2500}\u{2500}\u{2510}",
+            file.to_string_lossy()
         )
     } else {
         format!(
-            "\u{250c}\u{2500}\u{2500}\u{2500} moved to line {} \u{2500}\u{2500}\u{2500}\u{2510}",
-            m.dest_start
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved {direction} line {line} \u{2500}\u{2500}\u{2500}\u{2510}"
         )
     }
 }
 
-/// Build the "moved from" annotation label for added lines (destination side of a move).
-fn move_from_label(m: &MoveMatch, current_file: &Path) -> String {
-    if m.source_file != current_file {
-        let src = m.source_file.to_string_lossy();
-        format!(
-            "\u{250c}\u{2500}\u{2500}\u{2500} moved from {}:{} \u{2500}\u{2500}\u{2500}\u{2510}",
-            src, m.source_start
-        )
-    } else {
-        format!(
-            "\u{250c}\u{2500}\u{2500}\u{2500} moved from line {} \u{2500}\u{2500}\u{2500}\u{2510}",
-            m.source_start
-        )
-    }
+/// Find the innermost fold region covering a 0-indexed line range.
+fn find_innermost_fold(fold_regions: &[FoldRegion], start_0: usize, end_0: usize) -> Option<&FoldRegion> {
+    fold_regions
+        .iter()
+        .filter(|r| r.old_start <= start_0 && r.old_end >= end_0)
+        .min_by_key(|r| r.old_end - r.old_start)
+}
+
+/// Format a hidden-region label with the standard prefix/suffix.
+fn hidden_label(content: &str) -> String {
+    format!("{HIDDEN_LABEL_PREFIX}{content}{HIDDEN_LABEL_SUFFIX}")
 }
 
 /// Generate a label for the gap between two hunks.
@@ -424,22 +418,16 @@ fn make_gap_label(
     fold_regions: &[FoldRegion],
 ) -> String {
     if collapse_level == CollapseLevel::Scoped {
-        // Find the best (innermost) fold region that covers this gap.
         // Fold regions use 0-indexed line numbers; hunk positions are 1-indexed.
         let gap_start_0 = gap_old_start.saturating_sub(1);
         let gap_end_0 = gap_old_end.saturating_sub(1);
 
-        let best = fold_regions
-            .iter()
-            .filter(|r| r.old_start <= gap_start_0 && r.old_end >= gap_end_0)
-            .min_by_key(|r| r.old_end - r.old_start);
-
-        if let Some(region) = best {
-            return format!("{}{}{}", HIDDEN_LABEL_PREFIX, region.label, HIDDEN_LABEL_SUFFIX);
+        if let Some(region) = find_innermost_fold(fold_regions, gap_start_0, gap_end_0) {
+            return hidden_label(&region.label);
         }
     }
 
-    format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, gap_lines, HIDDEN_LABEL_SUFFIX)
+    hidden_label(&format!("{gap_lines} lines hidden"))
 }
 
 /// Collapse runs of context lines within a hunk that fall entirely inside a fold region.
@@ -532,18 +520,13 @@ fn collapse_context_in_hunk(
                 let start_0 = first.saturating_sub(1);
                 let end_0 = last.saturating_sub(1);
 
-                let best = fold_regions
-                    .iter()
-                    .filter(|r| r.old_start <= start_0 && r.old_end >= end_0)
-                    .min_by_key(|r| r.old_end - r.old_start);
-
-                if let Some(region) = best {
-                    format!("{}{}{}", HIDDEN_LABEL_PREFIX, region.label, HIDDEN_LABEL_SUFFIX)
+                if let Some(region) = find_innermost_fold(fold_regions, start_0, end_0) {
+                    hidden_label(&region.label)
                 } else {
-                    format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, run_count, HIDDEN_LABEL_SUFFIX)
+                    hidden_label(&format!("{run_count} lines hidden"))
                 }
             } else {
-                format!("{}{} lines hidden{}", HIDDEN_LABEL_PREFIX, run_count, HIDDEN_LABEL_SUFFIX)
+                hidden_label(&format!("{run_count} lines hidden"))
             };
 
             let marker_old = Line::from(Span::styled(label.clone(), fold_style));
@@ -622,73 +605,50 @@ fn apply_flash_to_line(line: Line<'static>, intensity: u8) -> Line<'static> {
     Line::from(new_spans)
 }
 
-/// Build the left (old) side line for a Modified line with token-level highlighting.
-fn build_token_line_old(line: &DiffLine) -> Line<'static> {
-    let line_no = format_line_no(line.old_line_no);
-    let mut spans = vec![Span::styled(line_no, Style::default().fg(Color::DarkGray))];
-
-    for token in &line.tokens {
-        let style = match token.kind {
-            ChangeKind::Equal => {
-                // Subtle background to show the line is changed
-                Style::default().bg(Color::Rgb(40, 0, 0))
-            }
-            ChangeKind::Deletion => {
-                // Bright red fg + darker red bg + BOLD
-                Style::default()
-                    .fg(Color::Red)
-                    .bg(Color::Rgb(80, 0, 0))
-                    .add_modifier(Modifier::BOLD)
-            }
-            ChangeKind::Rename => {
-                // Blue fg + blue bg + BOLD
-                Style::default()
-                    .fg(Color::Blue)
-                    .bg(Color::Rgb(0, 0, 80))
-                    .add_modifier(Modifier::BOLD)
-            }
-            ChangeKind::Addition => {
-                // Addition tokens shouldn't appear on the old side,
-                // but handle gracefully with dim styling
-                Style::default().bg(Color::Rgb(40, 0, 0))
-            }
-        };
-        spans.push(Span::styled(token.text.clone(), style));
-    }
-
-    Line::from(spans)
+/// Which side of the diff a token line is being built for.
+enum Side {
+    Old,
+    New,
 }
 
-/// Build the right (new) side line for a Modified line with token-level highlighting.
-fn build_token_line_new(line: &DiffLine) -> Line<'static> {
-    let line_no = format_line_no(line.new_line_no);
-    let mut spans = vec![Span::styled(line_no, Style::default().fg(Color::DarkGray))];
+/// Build a token-highlighted line for a Modified line on the given side.
+fn build_token_line(line: &DiffLine, side: Side) -> Line<'static> {
+    let (line_no, eq_bg, primary_kind, primary_fg, primary_bg) = match side {
+        Side::Old => (
+            line.old_line_no,
+            Color::Rgb(40, 0, 0),
+            ChangeKind::Deletion,
+            Color::Red,
+            Color::Rgb(80, 0, 0),
+        ),
+        Side::New => (
+            line.new_line_no,
+            Color::Rgb(0, 40, 0),
+            ChangeKind::Addition,
+            Color::Green,
+            Color::Rgb(0, 80, 0),
+        ),
+    };
+
+    let line_no_str = format_line_no(line_no);
+    let mut spans = vec![Span::styled(line_no_str, Style::default().fg(Color::DarkGray))];
 
     for token in &line.tokens {
-        let style = match token.kind {
-            ChangeKind::Equal => {
-                // Subtle background to show the line is changed
-                Style::default().bg(Color::Rgb(0, 40, 0))
-            }
-            ChangeKind::Addition => {
-                // Bright green fg + darker green bg + BOLD
-                Style::default()
-                    .fg(Color::Green)
-                    .bg(Color::Rgb(0, 80, 0))
-                    .add_modifier(Modifier::BOLD)
-            }
-            ChangeKind::Rename => {
-                // Blue fg + blue bg + BOLD
-                Style::default()
-                    .fg(Color::Blue)
-                    .bg(Color::Rgb(0, 0, 80))
-                    .add_modifier(Modifier::BOLD)
-            }
-            ChangeKind::Deletion => {
-                // Deletion tokens shouldn't appear on the new side,
-                // but handle gracefully with dim styling
-                Style::default().bg(Color::Rgb(0, 40, 0))
-            }
+        let style = if token.kind == ChangeKind::Equal {
+            Style::default().bg(eq_bg)
+        } else if token.kind == primary_kind {
+            Style::default()
+                .fg(primary_fg)
+                .bg(primary_bg)
+                .add_modifier(Modifier::BOLD)
+        } else if token.kind == ChangeKind::Rename {
+            Style::default()
+                .fg(Color::Blue)
+                .bg(Color::Rgb(0, 0, 80))
+                .add_modifier(Modifier::BOLD)
+        } else {
+            // Opposite-side tokens shouldn't appear here; handle gracefully
+            Style::default().bg(eq_bg)
         };
         spans.push(Span::styled(token.text.clone(), style));
     }
@@ -1027,8 +987,6 @@ mod tests {
             label: "fn setup_database() (18 lines)".to_string(),
             old_start: 2, // 0-indexed
             old_end: 19,  // 0-indexed
-            new_start: 2,
-            new_end: 19,
         });
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
@@ -1120,8 +1078,6 @@ mod tests {
                 label: "fn big_function() (30 lines)".to_string(),
                 old_start: 5,  // 0-indexed, covers lines 6-35
                 old_end: 34,
-                new_start: 5,
-                new_end: 34,
                 }],
             move_matches: vec![],
         };
@@ -1168,8 +1124,6 @@ mod tests {
             label: "fn foo() (20 lines)".to_string(),
             old_start: 3,  // 0-indexed
             old_end: 22,
-            new_start: 3,
-            new_end: 22,
         }];
         // gap_old_start=5 (1-indexed), gap_old_end=19 (1-indexed)
         // -> gap_start_0=4, gap_end_0=18 -- both inside [3..22]
@@ -1334,18 +1288,18 @@ mod tests {
         };
 
         // Cross-file labels
-        let to_label = move_to_label(&m, std::path::Path::new("a.rs"));
+        let to_label = move_label("to", &m.dest_file, m.dest_start, std::path::Path::new("a.rs"));
         assert!(to_label.contains("moved to b.rs:30"), "Got: {}", to_label);
 
-        let from_label = move_from_label(&m, std::path::Path::new("b.rs"));
+        let from_label = move_label("from", &m.source_file, m.source_start, std::path::Path::new("b.rs"));
         assert!(from_label.contains("moved from a.rs:10"), "Got: {}", from_label);
 
         // Same-file labels
-        let to_same = move_to_label(&m, std::path::Path::new("b.rs"));
+        let to_same = move_label("to", &m.dest_file, m.dest_start, std::path::Path::new("b.rs"));
         assert!(to_same.contains("moved to line 30"), "Got: {}", to_same);
 
         // When current_file matches source_file, from_label uses "line N"
-        let from_same = move_from_label(&m, std::path::Path::new("a.rs"));
+        let from_same = move_label("from", &m.source_file, m.source_start, std::path::Path::new("a.rs"));
         assert!(from_same.contains("moved from line 10"), "Got: {}", from_same);
     }
 }

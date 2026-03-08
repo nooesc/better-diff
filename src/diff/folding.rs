@@ -82,8 +82,6 @@ fn collect_fold_regions(cursor: &mut TreeCursor, source: &str, regions: &mut Vec
                     label,
                     old_start: start_line,
                     old_end: end_line,
-                    new_start: start_line,
-                    new_end: end_line,
                 });
             }
         }

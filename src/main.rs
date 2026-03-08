@@ -115,21 +115,13 @@ fn run_event_loop(
                     app.prev_hunk();
                 }
                 KeyCode::Char('s') => {
-                    if app.mode != DiffMode::Staged {
-                        app.mode = DiffMode::Staged;
+                    if app.set_mode(DiffMode::Staged) {
                         app.files = provider.compute_diff(repo_path, app.mode)?;
-                        app.render_cache.invalidate();
-                        app.active_file = 0;
-                        app.scroll_offset = 0;
                     }
                 }
                 KeyCode::Char('w') => {
-                    if app.mode != DiffMode::WorkingTree {
-                        app.mode = DiffMode::WorkingTree;
+                    if app.set_mode(DiffMode::WorkingTree) {
                         app.files = provider.compute_diff(repo_path, app.mode)?;
-                        app.render_cache.invalidate();
-                        app.active_file = 0;
-                        app.scroll_offset = 0;
                     }
                 }
                 KeyCode::Char('c') => {

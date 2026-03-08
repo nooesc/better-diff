@@ -4,6 +4,7 @@ use crate::diff::model::{CollapseLevel, DiffMode, FileDiff};
 use crate::syntax::HighlightSpan;
 
 /// Cached syntax highlights for a single file, keyed by file index.
+#[derive(Default)]
 pub struct RenderCache {
     /// The file index these highlights were computed for.
     pub cached_file_index: Option<usize>,
@@ -25,12 +26,6 @@ impl RenderCache {
         self.cached_file_index = None;
         self.old_highlights.clear();
         self.new_highlights.clear();
-    }
-}
-
-impl Default for RenderCache {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -90,11 +85,17 @@ impl App {
         }
     }
 
-    pub fn toggle_mode(&mut self) {
-        self.mode = match self.mode {
-            DiffMode::WorkingTree => DiffMode::Staged,
-            DiffMode::Staged => DiffMode::WorkingTree,
-        };
+    /// Switch to a different diff mode, resetting file selection and scroll.
+    /// Returns true if the mode actually changed (caller should recompute diffs).
+    pub fn set_mode(&mut self, mode: DiffMode) -> bool {
+        if self.mode == mode {
+            return false;
+        }
+        self.mode = mode;
+        self.render_cache.invalidate();
+        self.active_file = 0;
+        self.scroll_offset = 0;
+        true
     }
 
     pub fn cycle_collapse(&mut self) {
@@ -227,14 +228,19 @@ mod tests {
     }
 
     #[test]
-    fn test_mode_toggle() {
+    fn test_set_mode() {
         let mut app = App::new(PathBuf::from("."));
         assert_eq!(app.mode, DiffMode::WorkingTree);
 
-        app.toggle_mode();
+        // Switching to a different mode returns true
+        assert!(app.set_mode(DiffMode::Staged));
         assert_eq!(app.mode, DiffMode::Staged);
 
-        app.toggle_mode();
+        // Setting the same mode returns false
+        assert!(!app.set_mode(DiffMode::Staged));
+
+        // Switch back
+        assert!(app.set_mode(DiffMode::WorkingTree));
         assert_eq!(app.mode, DiffMode::WorkingTree);
     }
 

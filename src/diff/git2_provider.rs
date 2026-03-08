@@ -10,17 +10,12 @@ use super::moves::detect_moves;
 use super::provider::DiffProvider;
 use super::tokens::compute_token_changes;
 
+#[derive(Default)]
 pub struct Git2Provider;
 
 impl Git2Provider {
     pub fn new() -> Self {
         Self
-    }
-}
-
-impl Default for Git2Provider {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -53,20 +48,17 @@ impl DiffProvider for Git2Provider {
         let mut opts = DiffOptions::new();
         opts.context_lines(3);
 
+        let head_tree = repo
+            .head()
+            .ok()
+            .and_then(|head| head.peel_to_tree().ok());
+
         let diff = match mode {
             DiffMode::WorkingTree => {
-                let head_tree = repo
-                    .head()
-                    .ok()
-                    .and_then(|head| head.peel_to_tree().ok());
                 repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))
                     .context("Failed to compute working tree diff")?
             }
             DiffMode::Staged => {
-                let head_tree = repo
-                    .head()
-                    .ok()
-                    .and_then(|head| head.peel_to_tree().ok());
                 let index = repo.index().context("Failed to read index")?;
                 repo.diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))
                     .context("Failed to compute staged diff")?
@@ -167,10 +159,9 @@ impl DiffProvider for Git2Provider {
                                 ),
                                 LineKind::Added => (None, Some(raw_line.content.clone())),
                                 LineKind::Deleted => (Some(raw_line.content.clone()), None),
-                                LineKind::Modified => (
-                                    Some(raw_line.content.clone()),
-                                    Some(raw_line.content.clone()),
-                                ),
+                                // Modified lines are only created later by compute_line_tokens,
+                                // never from git2 callbacks directly.
+                                LineKind::Modified => unreachable!(),
                             };
 
                             DiffLine {
@@ -322,15 +313,19 @@ fn compute_line_tokens(hunk: &mut Hunk) {
 
             let (old_tokens, new_tokens) = compute_token_changes(&old_text, &new_text);
 
+            // Capture line numbers before mutation
+            let add_new_line_no = hunk.lines[add_idx].new_line_no;
+            let del_old_line_no = hunk.lines[del_idx].old_line_no;
+
             // Promote the deleted line to Modified, storing old-side tokens
             hunk.lines[del_idx].kind = LineKind::Modified;
-            hunk.lines[del_idx].new_line_no = hunk.lines[add_idx].new_line_no;
-            hunk.lines[del_idx].new_text = Some(new_text.clone());
+            hunk.lines[del_idx].new_line_no = add_new_line_no;
+            hunk.lines[del_idx].new_text = Some(new_text);
             hunk.lines[del_idx].tokens = old_tokens;
 
             // Promote the added line to Modified, storing new-side tokens
             hunk.lines[add_idx].kind = LineKind::Modified;
-            hunk.lines[add_idx].old_line_no = hunk.lines[del_idx].old_line_no;
+            hunk.lines[add_idx].old_line_no = del_old_line_no;
             hunk.lines[add_idx].old_text = Some(old_text);
             hunk.lines[add_idx].tokens = new_tokens;
         }
