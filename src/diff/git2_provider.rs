@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use git2::{Delta, DiffOptions, Repository};
 
+use super::folding::compute_fold_regions;
 use super::model::{DiffLine, DiffMode, FileDiff, FileStatus, Hunk, LineKind};
 use super::provider::DiffProvider;
 use super::tokens::compute_token_changes;
@@ -210,6 +211,15 @@ impl DiffProvider for Git2Provider {
                 fold_regions: Vec::new(),
                 move_matches: Vec::new(),
             });
+        }
+
+        // Compute structural fold regions from file contents
+        for file_diff in &mut file_diffs {
+            if !file_diff.new_content.is_empty() {
+                file_diff.fold_regions = compute_fold_regions(&file_diff.new_content);
+            } else if !file_diff.old_content.is_empty() {
+                file_diff.fold_regions = compute_fold_regions(&file_diff.old_content);
+            }
         }
 
         Ok(file_diffs)

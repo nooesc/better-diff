@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
 mod app;
 mod diff;
+mod syntax;
 mod ui;
 mod watcher;
 
