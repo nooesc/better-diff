@@ -63,7 +63,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     // --- Content area ---
     if let Some(file) = app.active_file() {
-        split_pane::render_split_pane(frame, content_area, file, app.scroll_offset);
+        split_pane::render_split_pane(frame, content_area, file, app.scroll_offset, app.collapse_level);
     } else {
         let content = Paragraph::new("No changes to display").block(
             Block::default()
