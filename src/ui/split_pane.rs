@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::diff::model::{ChangeKind, DiffLine, FileDiff, LineKind};
+use crate::syntax::{HighlightSpan, highlight_rust};
 use super::minimap::Minimap;
 
 /// Render a side-by-side diff view with the old file on the left and the new file on the right.
@@ -23,7 +24,24 @@ pub fn render_split_pane(
     ])
     .areas(area);
 
-    let (old_lines, new_lines) = build_side_by_side_lines(file);
+    let is_rust = file
+        .path
+        .extension()
+        .is_some_and(|ext| ext == "rs");
+
+    let old_highlights = if is_rust {
+        highlight_rust(&file.old_content)
+    } else {
+        Vec::new()
+    };
+    let new_highlights = if is_rust {
+        highlight_rust(&file.new_content)
+    } else {
+        Vec::new()
+    };
+
+    let (old_lines, new_lines) =
+        build_side_by_side_lines(file, &old_highlights, &new_highlights);
 
     let visible_height = left_area.height.saturating_sub(2) as usize; // subtract 2 for borders
 
@@ -62,7 +80,11 @@ pub fn render_split_pane(
 }
 
 /// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
-fn build_side_by_side_lines(file: &FileDiff) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
+fn build_side_by_side_lines(
+    file: &FileDiff,
+    old_highlights: &[Vec<HighlightSpan>],
+    new_highlights: &[Vec<HighlightSpan>],
+) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     let mut old_lines: Vec<Line<'static>> = Vec::new();
     let mut new_lines: Vec<Line<'static>> = Vec::new();
 
@@ -84,16 +106,27 @@ fn build_side_by_side_lines(file: &FileDiff) -> (Vec<Line<'static>>, Vec<Line<'s
                 LineKind::Context => {
                     let line_no = format_line_no(line.old_line_no);
                     let text = line.old_text.as_deref().unwrap_or("");
-                    let old_line = Line::from(vec![
-                        Span::styled(line_no.clone(), Style::default().fg(Color::DarkGray)),
-                        Span::raw(text.to_string()),
-                    ]);
+
+                    let mut old_spans = vec![
+                        Span::styled(line_no, Style::default().fg(Color::DarkGray)),
+                    ];
+                    old_spans.extend(apply_syntax_highlights(
+                        text,
+                        line.old_line_no,
+                        old_highlights,
+                    ));
+                    let old_line = Line::from(old_spans);
 
                     let new_line_no = format_line_no(line.new_line_no);
-                    let new_line = Line::from(vec![
+                    let mut new_spans = vec![
                         Span::styled(new_line_no, Style::default().fg(Color::DarkGray)),
-                        Span::raw(text.to_string()),
-                    ]);
+                    ];
+                    new_spans.extend(apply_syntax_highlights(
+                        text,
+                        line.new_line_no,
+                        new_highlights,
+                    ));
+                    let new_line = Line::from(new_spans);
 
                     old_lines.push(old_line);
                     new_lines.push(new_line);
@@ -260,6 +293,72 @@ fn build_token_line_new(line: &DiffLine) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Apply syntax highlight spans to a line of text, returning a Vec of styled Spans.
+///
+/// `line_no` is 1-indexed (as stored in DiffLine). The highlights vec is 0-indexed.
+/// If no highlights are available for the line, falls back to plain text.
+fn apply_syntax_highlights(
+    text: &str,
+    line_no: Option<usize>,
+    highlights: &[Vec<HighlightSpan>],
+) -> Vec<Span<'static>> {
+    // Convert 1-indexed line number to 0-indexed for highlight lookup
+    let line_spans = line_no
+        .and_then(|n| n.checked_sub(1))
+        .and_then(|idx| highlights.get(idx));
+
+    match line_spans {
+        Some(spans) if !spans.is_empty() => {
+            let mut result = Vec::new();
+            let mut pos: usize = 0;
+
+            for span in spans {
+                // Skip spans that are out of range for this text
+                if span.start >= text.len() {
+                    break;
+                }
+
+                // Emit unstyled text for the gap before this span
+                if span.start > pos {
+                    let end = span.start.min(text.len());
+                    if let Some(s) = text.get(pos..end) {
+                        result.push(Span::raw(s.to_string()));
+                    }
+                }
+
+                // Emit the styled span
+                let start = span.start.max(pos);
+                let end = span.end.min(text.len());
+                if start < end
+                    && let Some(s) = text.get(start..end)
+                {
+                    result.push(Span::styled(s.to_string(), span.style));
+                }
+
+                pos = span.end.min(text.len());
+            }
+
+            // Emit any remaining unstyled text after the last span
+            if pos < text.len()
+                && let Some(s) = text.get(pos..)
+            {
+                result.push(Span::raw(s.to_string()));
+            }
+
+            // If we produced nothing (all spans out of range), fall back
+            if result.is_empty() {
+                vec![Span::raw(text.to_string())]
+            } else {
+                result
+            }
+        }
+        _ => {
+            // No highlights available — plain text
+            vec![Span::raw(text.to_string())]
+        }
+    }
+}
+
 /// Format a line number as right-aligned in 4 characters, or spaces if None.
 fn format_line_no(line_no: Option<usize>) -> String {
     match line_no {
@@ -388,7 +487,8 @@ mod tests {
     #[test]
     fn test_build_side_by_side_basic() {
         let file = make_test_file();
-        let (old, new) = build_side_by_side_lines(&file);
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl);
 
         // Should have: 1 hunk header + 1 context + 1 deleted + 1 added = 4 lines each
         assert_eq!(old.len(), 4, "Expected 4 old lines, got {}", old.len());
@@ -398,7 +498,8 @@ mod tests {
     #[test]
     fn test_build_side_by_side_modified_pair() {
         let file = make_modified_file();
-        let (old, new) = build_side_by_side_lines(&file);
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl);
 
         // Should have: 1 hunk header + 1 modified line = 2 lines each
         assert_eq!(old.len(), 2, "Expected 2 old lines, got {}", old.len());
@@ -424,7 +525,8 @@ mod tests {
             fold_regions: vec![],
             move_matches: vec![],
         };
-        let (old, new) = build_side_by_side_lines(&file);
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, new) = build_side_by_side_lines(&file, &no_hl, &no_hl);
         assert!(old.is_empty());
         assert!(new.is_empty());
     }
