@@ -6,16 +6,12 @@ use clap::Parser;
 use crossbeam_channel::unbounded;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
-mod app;
-mod diff;
-mod syntax;
-mod ui;
-mod watcher;
-
-use app::App;
-use diff::git2_provider::Git2Provider;
-use diff::model::DiffMode;
-use diff::provider::DiffProvider;
+use better_diff::app::App;
+use better_diff::diff::git2_provider::Git2Provider;
+use better_diff::diff::model::DiffMode;
+use better_diff::diff::provider::DiffProvider;
+use better_diff::ui;
+use better_diff::watcher;
 
 #[derive(Parser)]
 #[command(name = "better-diff", about = "A better git diff viewer")]
