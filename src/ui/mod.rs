@@ -1,3 +1,5 @@
+pub mod split_pane;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
@@ -58,34 +60,16 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(Paragraph::new(mode_line), mode_area);
 
     // --- Content area ---
-    let content = if let Some(file) = app.active_file() {
-        let status = format!("{:?}", file.status);
-        let hunk_count = file.hunks.len();
-        let old_size = file.old_content.len();
-        let new_size = file.new_content.len();
-        let collapse = format!("{:?}", app.collapse_level);
-        let info = format!(
-            "Path: {}\nStatus: {}\nHunks: {}\nOld size: {} bytes\nNew size: {} bytes\nCollapse: {}",
-            file.path.display(),
-            status,
-            hunk_count,
-            old_size,
-            new_size,
-            collapse,
-        );
-        Paragraph::new(info).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(file.path.to_string_lossy().to_string()),
-        )
+    if let Some(file) = app.active_file() {
+        split_pane::render_split_pane(frame, content_area, file, app.scroll_offset);
     } else {
-        Paragraph::new("No file selected").block(
+        let content = Paragraph::new("No changes to display").block(
             Block::default()
                 .borders(Borders::ALL)
                 .title("Diff View"),
-        )
-    };
-    frame.render_widget(content, content_area);
+        );
+        frame.render_widget(content, content_area);
+    }
 
     // --- Status bar ---
     let status_line = Line::from(vec![
