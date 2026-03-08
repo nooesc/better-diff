@@ -4,7 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use clap::Parser;
 use crossbeam_channel::unbounded;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
 
 use better_diff::app::App;
 use better_diff::diff::git2_provider::Git2Provider;
@@ -41,13 +41,21 @@ fn main() -> Result<()> {
     let (watch_tx, watch_rx) = unbounded();
     let _watcher = watcher::start_watching(&repo_path, watch_tx)?;
 
-    // Initialize terminal
+    // Initialize terminal with mouse support
+    ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::EnableMouseCapture
+    )?;
     let mut terminal = ratatui::init();
 
     // Event loop
     let result = run_event_loop(&mut terminal, &mut app, &provider, &repo_path, &watch_rx);
 
     // Restore terminal
+    ratatui::crossterm::execute!(
+        std::io::stdout(),
+        ratatui::crossterm::event::DisableMouseCapture
+    )?;
     ratatui::restore();
 
     result
@@ -85,57 +93,69 @@ fn run_event_loop(
             }
         }
 
-        if event::poll(Duration::from_millis(50))?
-            && let Event::Key(key) = event::read()?
-        {
-            if key.kind != KeyEventKind::Press {
-                continue;
-            }
+        if event::poll(Duration::from_millis(50))? {
+            match event::read()? {
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        for _ in 0..3 {
+                            app.scroll_down();
+                        }
+                    }
+                    MouseEventKind::ScrollUp => {
+                        for _ in 0..3 {
+                            app.scroll_up();
+                        }
+                    }
+                    _ => {}
+                },
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            app.should_quit = true;
+                        }
+                        KeyCode::Tab => {
+                            app.next_file();
+                        }
+                        KeyCode::BackTab => {
+                            app.prev_file();
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            app.scroll_down();
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.scroll_up();
+                        }
+                        KeyCode::Char('n') => {
+                            app.next_hunk();
+                        }
+                        KeyCode::Char('N') => {
+                            app.prev_hunk();
+                        }
+                        KeyCode::Char('s') => {
+                            if app.set_mode(DiffMode::Staged) {
+                                app.files = provider.compute_diff(repo_path, app.mode)?;
+                            }
+                        }
+                        KeyCode::Char('w') => {
+                            if app.set_mode(DiffMode::WorkingTree) {
+                                app.files = provider.compute_diff(repo_path, app.mode)?;
+                            }
+                        }
+                        KeyCode::Char('c') => {
+                            app.cycle_collapse();
+                        }
+                        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                            let index = (c as usize) - ('1' as usize);
+                            app.select_file(index);
+                        }
+                        _ => {}
+                    }
 
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => {
-                    app.should_quit = true;
-                }
-                KeyCode::Tab => {
-                    app.next_file();
-                }
-                KeyCode::BackTab => {
-                    app.prev_file();
-                }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    app.scroll_down();
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    app.scroll_up();
-                }
-                KeyCode::Char('n') => {
-                    app.next_hunk();
-                }
-                KeyCode::Char('N') => {
-                    app.prev_hunk();
-                }
-                KeyCode::Char('s') => {
-                    if app.set_mode(DiffMode::Staged) {
-                        app.files = provider.compute_diff(repo_path, app.mode)?;
+                    if app.should_quit {
+                        return Ok(());
                     }
-                }
-                KeyCode::Char('w') => {
-                    if app.set_mode(DiffMode::WorkingTree) {
-                        app.files = provider.compute_diff(repo_path, app.mode)?;
-                    }
-                }
-                KeyCode::Char('c') => {
-                    app.cycle_collapse();
-                }
-                KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                    let index = (c as usize) - ('1' as usize);
-                    app.select_file(index);
                 }
                 _ => {}
-            }
-
-            if app.should_quit {
-                return Ok(());
             }
         }
 
