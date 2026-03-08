@@ -129,6 +129,23 @@ fn build_side_by_side_lines(
 
     let fold_style = Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
 
+    // Build move-detection lookup maps.
+    let mut move_source_starts: HashMap<usize, &MoveMatch> = HashMap::new();
+    let mut move_source_ends: HashMap<usize, &MoveMatch> = HashMap::new();
+    let mut move_dest_starts: HashMap<usize, &MoveMatch> = HashMap::new();
+    let mut move_dest_ends: HashMap<usize, &MoveMatch> = HashMap::new();
+
+    for m in &file.move_matches {
+        if m.source_file == file.path {
+            move_source_starts.insert(m.source_start, m);
+            move_source_ends.insert(m.source_end, m);
+        }
+        if m.dest_file == file.path {
+            move_dest_starts.insert(m.dest_start, m);
+            move_dest_ends.insert(m.dest_end, m);
+        }
+    }
+
     for (hunk_idx, hunk) in file.hunks.iter().enumerate() {
         // Between hunks, insert a collapsed marker or fold label for the gap
         if hunk_idx > 0 && collapse_level != CollapseLevel::Expanded {
@@ -162,7 +179,14 @@ fn build_side_by_side_lines(
         new_lines.push(Line::from(Span::styled(header, header_style)));
 
         // Collect context runs within the hunk for potential collapsing in Scoped mode
-        let hunk_lines = build_hunk_lines(hunk, old_highlights, new_highlights);
+        let move_ctx = MoveContext {
+            current_file: &file.path,
+            source_starts: &move_source_starts,
+            source_ends: &move_source_ends,
+            dest_starts: &move_dest_starts,
+            dest_ends: &move_dest_ends,
+        };
+        let hunk_lines = build_hunk_lines(hunk, old_highlights, new_highlights, &move_ctx);
 
         if collapse_level == CollapseLevel::Scoped {
             // In Scoped mode, collapse runs of context lines that fall entirely
@@ -188,12 +212,24 @@ fn build_side_by_side_lines(
     (old_lines, new_lines, hunk_start_offsets)
 }
 
+/// Bundled move-detection lookup data to avoid passing many arguments.
+struct MoveContext<'a> {
+    current_file: &'a Path,
+    source_starts: &'a HashMap<usize, &'a MoveMatch>,
+    source_ends: &'a HashMap<usize, &'a MoveMatch>,
+    dest_starts: &'a HashMap<usize, &'a MoveMatch>,
+    dest_ends: &'a HashMap<usize, &'a MoveMatch>,
+}
+
 /// Build the rendered line pairs for a single hunk (without collapsing).
 fn build_hunk_lines(
     hunk: &crate::diff::model::Hunk,
     old_highlights: &[Vec<HighlightSpan>],
     new_highlights: &[Vec<HighlightSpan>],
+    moves: &MoveContext<'_>,
 ) -> Vec<(Line<'static>, Line<'static>)> {
+    let move_style = Style::default().fg(Color::Magenta);
+    let empty_line = || Line::from(Span::raw(String::new()));
     let mut result = Vec::new();
     let mut i = 0;
 
@@ -231,7 +267,16 @@ fn build_hunk_lines(
             }
 
             LineKind::Added => {
-                let old_line = Line::from(Span::raw(String::new()));
+                // Check for move destination opening annotation
+                if let Some(n) = line.new_line_no
+                    && let Some(m) = moves.dest_starts.get(&n)
+                {
+                    let label = move_from_label(m, moves.current_file);
+                    let annotation = Line::from(Span::styled(label, move_style));
+                    result.push((empty_line(), annotation));
+                }
+
+                let old_line = empty_line();
 
                 let line_no = format_line_no(line.new_line_no);
                 let text = line.new_text.as_deref().unwrap_or("");
@@ -246,10 +291,31 @@ fn build_hunk_lines(
                 ]);
 
                 result.push((old_line, new_line));
+
+                // Check for move destination closing annotation
+                if let Some(n) = line.new_line_no
+                    && moves.dest_ends.contains_key(&n)
+                {
+                    let closing = Line::from(Span::styled(
+                        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}".to_string(),
+                        move_style,
+                    ));
+                    result.push((empty_line(), closing));
+                }
+
                 i += 1;
             }
 
             LineKind::Deleted => {
+                // Check for move source opening annotation
+                if let Some(n) = line.old_line_no
+                    && let Some(m) = moves.source_starts.get(&n)
+                {
+                    let label = move_to_label(m, moves.current_file);
+                    let annotation = Line::from(Span::styled(label, move_style));
+                    result.push((annotation, empty_line()));
+                }
+
                 let line_no = format_line_no(line.old_line_no);
                 let text = line.old_text.as_deref().unwrap_or("");
                 let old_line = Line::from(vec![
@@ -262,8 +328,20 @@ fn build_hunk_lines(
                     ),
                 ]);
 
-                let new_line = Line::from(Span::raw(String::new()));
+                let new_line = empty_line();
                 result.push((old_line, new_line));
+
+                // Check for move source closing annotation
+                if let Some(n) = line.old_line_no
+                    && moves.source_ends.contains_key(&n)
+                {
+                    let closing = Line::from(Span::styled(
+                        "\u{2514}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2518}".to_string(),
+                        move_style,
+                    ));
+                    result.push((closing, empty_line()));
+                }
+
                 i += 1;
             }
 
@@ -308,6 +386,38 @@ fn build_hunk_lines(
     }
 
     result
+}
+
+/// Build the "moved to" annotation label for deleted lines (source side of a move).
+fn move_to_label(m: &MoveMatch, current_file: &Path) -> String {
+    if m.dest_file != current_file {
+        let dest = m.dest_file.to_string_lossy();
+        format!(
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved to {}:{} \u{2500}\u{2500}\u{2500}\u{2510}",
+            dest, m.dest_start
+        )
+    } else {
+        format!(
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved to line {} \u{2500}\u{2500}\u{2500}\u{2510}",
+            m.dest_start
+        )
+    }
+}
+
+/// Build the "moved from" annotation label for added lines (destination side of a move).
+fn move_from_label(m: &MoveMatch, current_file: &Path) -> String {
+    if m.source_file != current_file {
+        let src = m.source_file.to_string_lossy();
+        format!(
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved from {}:{} \u{2500}\u{2500}\u{2500}\u{2510}",
+            src, m.source_start
+        )
+    } else {
+        format!(
+            "\u{250c}\u{2500}\u{2500}\u{2500} moved from line {} \u{2500}\u{2500}\u{2500}\u{2510}",
+            m.source_start
+        )
+    }
 }
 
 /// Generate a label for the gap between two hunks.
@@ -673,7 +783,7 @@ mod tests {
     use super::*;
     use crate::diff::model::{
         ChangeKind, CollapseLevel, DiffLine, FileDiff, FileStatus, FoldKind, FoldRegion, Hunk,
-        LineKind, TokenChange,
+        LineKind, MoveMatch, TokenChange,
     };
     use std::path::PathBuf;
 
@@ -1090,5 +1200,163 @@ mod tests {
             "Expected fallback label, got: {}",
             label
         );
+    }
+
+    #[test]
+    fn test_move_annotations_same_file() {
+        let file = FileDiff {
+            path: PathBuf::from("test.rs"),
+            status: FileStatus::Modified,
+            hunks: vec![Hunk {
+                old_start: 10,
+                new_start: 10,
+                old_lines: 2,
+                new_lines: 2,
+                lines: vec![
+                    DiffLine {
+                        kind: LineKind::Deleted,
+                        old_line_no: Some(10),
+                        new_line_no: None,
+                        old_text: Some("fn old_fn() {}".to_string()),
+                        new_text: None,
+                        tokens: vec![],
+                    },
+                    DiffLine {
+                        kind: LineKind::Added,
+                        old_line_no: None,
+                        new_line_no: Some(50),
+                        old_text: None,
+                        new_text: Some("fn old_fn() {}".to_string()),
+                        tokens: vec![],
+                    },
+                ],
+            }],
+            old_content: String::new(),
+            new_content: String::new(),
+            fold_regions: vec![],
+            move_matches: vec![MoveMatch {
+                source_file: PathBuf::from("test.rs"),
+                source_start: 10,
+                source_end: 10,
+                dest_file: PathBuf::from("test.rs"),
+                dest_start: 50,
+                dest_end: 50,
+                similarity: 1.0,
+            }],
+        };
+
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+
+        // header(1) + move_source_open(1) + deleted(1) + move_source_close(1)
+        //           + move_dest_open(1) + added(1) + move_dest_close(1) = 7
+        assert_eq!(old.len(), 7, "Expected 7 old lines, got {}", old.len());
+        assert_eq!(new.len(), 7, "Expected 7 new lines, got {}", new.len());
+
+        // Check opening annotation on old side (index 1, after header)
+        let old_open = old[1].to_string();
+        assert!(
+            old_open.contains("moved to line 50"),
+            "Expected 'moved to line 50', got: {}",
+            old_open
+        );
+
+        // Check opening annotation on new side (index 4)
+        let new_open = new[4].to_string();
+        assert!(
+            new_open.contains("moved from line 10"),
+            "Expected 'moved from line 10', got: {}",
+            new_open
+        );
+    }
+
+    #[test]
+    fn test_move_annotations_cross_file() {
+        let file = FileDiff {
+            path: PathBuf::from("src/old.rs"),
+            status: FileStatus::Modified,
+            hunks: vec![Hunk {
+                old_start: 5,
+                new_start: 5,
+                old_lines: 1,
+                new_lines: 0,
+                lines: vec![DiffLine {
+                    kind: LineKind::Deleted,
+                    old_line_no: Some(5),
+                    new_line_no: None,
+                    old_text: Some("fn moved_fn() {}".to_string()),
+                    new_text: None,
+                    tokens: vec![],
+                }],
+            }],
+            old_content: String::new(),
+            new_content: String::new(),
+            fold_regions: vec![],
+            move_matches: vec![MoveMatch {
+                source_file: PathBuf::from("src/old.rs"),
+                source_start: 5,
+                source_end: 5,
+                dest_file: PathBuf::from("src/new.rs"),
+                dest_start: 20,
+                dest_end: 20,
+                similarity: 0.95,
+            }],
+        };
+
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, _new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+
+        // header(1) + move_source_open(1) + deleted(1) + move_source_close(1) = 4
+        assert_eq!(old.len(), 4, "Expected 4 old lines, got {}", old.len());
+
+        let old_open = old[1].to_string();
+        assert!(
+            old_open.contains("moved to src/new.rs:20"),
+            "Expected cross-file annotation with 'moved to src/new.rs:20', got: {}",
+            old_open
+        );
+    }
+
+    #[test]
+    fn test_no_move_annotations_without_matches() {
+        // No move_matches => no annotation lines should be inserted
+        let file = make_test_file();
+        let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+
+        // header(1) + context(1) + deleted(1) + added(1) = 4
+        assert_eq!(old.len(), 4, "Expected 4 old lines without moves, got {}", old.len());
+        assert_eq!(new.len(), 4, "Expected 4 new lines without moves, got {}", new.len());
+    }
+
+    #[test]
+    fn test_move_label_helpers() {
+        let m = MoveMatch {
+            source_file: PathBuf::from("a.rs"),
+            source_start: 10,
+            source_end: 15,
+            dest_file: PathBuf::from("b.rs"),
+            dest_start: 30,
+            dest_end: 35,
+            similarity: 0.9,
+        };
+
+        // Cross-file labels
+        let to_label = move_to_label(&m, std::path::Path::new("a.rs"));
+        assert!(to_label.contains("moved to b.rs:30"), "Got: {}", to_label);
+
+        let from_label = move_from_label(&m, std::path::Path::new("b.rs"));
+        assert!(from_label.contains("moved from a.rs:10"), "Got: {}", from_label);
+
+        // Same-file labels
+        let to_same = move_to_label(&m, std::path::Path::new("b.rs"));
+        assert!(to_same.contains("moved to line 30"), "Got: {}", to_same);
+
+        // When current_file matches source_file, from_label uses "line N"
+        let from_same = move_from_label(&m, std::path::Path::new("a.rs"));
+        assert!(from_same.contains("moved from line 10"), "Got: {}", from_same);
     }
 }
