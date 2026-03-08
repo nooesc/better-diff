@@ -3,11 +3,13 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
+use crossbeam_channel::unbounded;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
 
 mod app;
 mod diff;
 mod ui;
+mod watcher;
 
 use app::App;
 use diff::git2_provider::Git2Provider;
@@ -38,11 +40,15 @@ fn main() -> Result<()> {
     let provider = Git2Provider::new();
     app.files = provider.compute_diff(&repo_path, app.mode)?;
 
+    // Start file watcher
+    let (watch_tx, watch_rx) = unbounded();
+    let _watcher = watcher::start_watching(&repo_path, watch_tx)?;
+
     // Initialize terminal
     let mut terminal = ratatui::init();
 
     // Event loop
-    let result = run_event_loop(&mut terminal, &mut app, &provider, &repo_path);
+    let result = run_event_loop(&mut terminal, &mut app, &provider, &repo_path, &watch_rx);
 
     // Restore terminal
     ratatui::restore();
@@ -55,11 +61,29 @@ fn run_event_loop(
     app: &mut App,
     provider: &Git2Provider,
     repo_path: &PathBuf,
+    watch_rx: &crossbeam_channel::Receiver<watcher::WatchEvent>,
 ) -> Result<()> {
     loop {
         terminal.draw(|frame| ui::render(frame, app))?;
 
-        if event::poll(Duration::from_millis(100))? {
+        // Drain file-system watch events and refresh diff
+        while let Ok(_event) = watch_rx.try_recv() {
+            let current_path = app.active_file().map(|f| f.path.clone());
+            app.files = provider.compute_diff(repo_path, app.mode)?;
+            // Try to keep the same file selected
+            if let Some(path) = current_path {
+                let new_index = app
+                    .files
+                    .iter()
+                    .position(|f| f.path == path)
+                    .unwrap_or(0);
+                app.active_file = new_index;
+            } else {
+                app.active_file = 0;
+            }
+        }
+
+        if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
