@@ -149,12 +149,12 @@ fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
 }
 
 fn line_overlap(a_start: usize, a_end: usize, b_start: usize, b_end: usize) -> bool {
-    let a_start = a_start.min(a_end);
-    let a_end = a_end.max(a_start);
-    let b_start = b_start.min(b_end);
-    let b_end = b_end.max(b_start);
+    let a_min = a_start.min(a_end);
+    let a_max = a_start.max(a_end);
+    let b_min = b_start.min(b_end);
+    let b_max = b_start.max(b_end);
 
-    !(a_end < b_start || b_end < a_start)
+    !(a_max < b_min || b_max < a_min)
 }
 
 fn block_score(similarity: f64, del: &Block, add: &Block) -> f64 {
@@ -250,8 +250,12 @@ pub fn detect_moves(files: &mut [FileDiff]) {
 
     // Distribute matches back to the relevant FileDiff entries.
     for file in files.iter_mut() {
+        let file_matches = |path: &PathBuf| {
+            file.path == *path || file.old_path.as_deref() == Some(path.as_path())
+        };
+
         for m in &matches {
-            if m.source_file == file.path || m.dest_file == file.path {
+            if file_matches(&m.source_file) || file_matches(&m.dest_file) {
                 file.move_matches.push(m.clone());
             }
         }
@@ -740,5 +744,96 @@ mod tests {
         assert_eq!(files[0].move_matches.len(), 1);
         assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
         assert_eq!(files[0].move_matches[0].dest_file, PathBuf::from("src/new_name.rs"));
+    }
+
+    #[test]
+    fn test_detect_move_distributed_to_renamed_source_file_entry() {
+        let moved_lines = ["fn moved_cross() {", "    trace!()", "}"];
+
+        let source_lines = moved_lines
+            .iter()
+            .enumerate()
+            .map(|(i, text)| DiffLine {
+                kind: LineKind::Deleted,
+                old_line_no: Some(20 + i),
+                new_line_no: None,
+                old_text: Some((*text).to_string()),
+                new_text: None,
+                tokens: vec![],
+            })
+            .chain(std::iter::once(DiffLine {
+                kind: LineKind::Context,
+                old_line_no: Some(23),
+                new_line_no: Some(23),
+                old_text: Some("// separator".to_string()),
+                new_text: Some("// separator".to_string()),
+                tokens: vec![],
+            }))
+            .collect::<Vec<_>>();
+
+        let destination_lines = moved_lines
+            .iter()
+            .enumerate()
+            .map(|(i, text)| DiffLine {
+                kind: LineKind::Added,
+                old_line_no: None,
+                new_line_no: Some(10 + i),
+                old_text: None,
+                new_text: Some((*text).to_string()),
+                tokens: vec![],
+            })
+            .chain(std::iter::once(DiffLine {
+                kind: LineKind::Context,
+                old_line_no: Some(13),
+                new_line_no: Some(13),
+                old_text: Some("// separator".to_string()),
+                new_text: Some("// separator".to_string()),
+                tokens: vec![],
+            }))
+            .collect::<Vec<_>>();
+
+        let mut files = vec![
+            FileDiff {
+                path: PathBuf::from("src/new_name.rs"),
+                old_path: Some(PathBuf::from("src/old_name.rs")),
+                status: FileStatus::Renamed,
+                hunks: vec![Hunk {
+                    old_start: 20,
+                    new_start: 23,
+                    old_lines: 4,
+                    new_lines: 1,
+                    lines: source_lines,
+                }],
+                old_content: String::new(),
+                new_content: String::new(),
+                fold_regions: vec![],
+                move_matches: vec![],
+            },
+            FileDiff {
+                path: PathBuf::from("src/other.rs"),
+                old_path: None,
+                status: FileStatus::Modified,
+                hunks: vec![Hunk {
+                    old_start: 10,
+                    new_start: 10,
+                    old_lines: 4,
+                    new_lines: 4,
+                    lines: destination_lines,
+                }],
+                old_content: String::new(),
+                new_content: String::new(),
+                fold_regions: vec![],
+                move_matches: vec![],
+            },
+        ];
+
+        detect_moves(&mut files);
+
+        assert_eq!(files[0].move_matches.len(), 1, "renamed source file should keep move match");
+        assert_eq!(files[1].move_matches.len(), 1, "destination file should keep move match");
+        assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
+        assert_eq!(files[0].move_matches[0].dest_file, PathBuf::from("src/other.rs"));
+        assert_eq!(files[1].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
+        assert_eq!(files[1].move_matches[0].dest_file, PathBuf::from("src/other.rs"));
     }
 }

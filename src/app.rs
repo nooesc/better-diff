@@ -62,7 +62,6 @@ impl RenderCache {
                 collapse_level,
             );
             self.layout_rebuild_count = self.layout_rebuild_count.saturating_add(1);
-            self.cached_file_index = Some(file_index);
             self.cached_layout_file_index = Some(file_index);
             self.cached_layout_collapse_level = Some(collapse_level);
         }
@@ -298,10 +297,10 @@ mod tests {
         index.write().expect("write index");
 
         let tree_id = index.write_tree().expect("write tree");
-        let tree = repo.find_tree(tree_id).expect("load tree");
         let sig = Signature::now("better-diff", "test@example.com").expect("signature");
-        let _ = repo
-            .commit(
+        let _ = {
+            let tree = repo.find_tree(tree_id).expect("load tree");
+            repo.commit(
                 Some("HEAD"),
                 &sig,
                 &sig,
@@ -309,7 +308,8 @@ mod tests {
                 &tree,
                 &[],
             )
-            .expect("create initial commit");
+            .expect("create initial commit")
+        };
 
         (tmp_dir, repo)
     }
