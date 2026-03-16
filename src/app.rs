@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::diff::model::{CollapseLevel, DiffMode, FileDiff};
 use crate::syntax::HighlightSpan;
+use crate::ui::split_pane::RenderedFileLayout;
 use git2::Repository;
 
 /// Cached syntax highlights for a single file, keyed by file index.
@@ -11,6 +12,12 @@ pub struct RenderCache {
     pub cached_file_index: Option<usize>,
     pub old_highlights: Vec<Vec<HighlightSpan>>,
     pub new_highlights: Vec<Vec<HighlightSpan>>,
+
+    /// Cached rendered split-pane layout for the active file/collapse level.
+    pub cached_layout_file_index: Option<usize>,
+    pub cached_layout_collapse_level: Option<CollapseLevel>,
+    pub layout: RenderedFileLayout,
+    pub layout_rebuild_count: usize,
 }
 
 impl RenderCache {
@@ -19,6 +26,10 @@ impl RenderCache {
             cached_file_index: None,
             old_highlights: Vec::new(),
             new_highlights: Vec::new(),
+            cached_layout_file_index: None,
+            cached_layout_collapse_level: None,
+            layout: RenderedFileLayout::default(),
+            layout_rebuild_count: 0,
         }
     }
 
@@ -27,6 +38,36 @@ impl RenderCache {
         self.cached_file_index = None;
         self.old_highlights.clear();
         self.new_highlights.clear();
+
+        self.cached_layout_file_index = None;
+        self.cached_layout_collapse_level = None;
+        self.layout = RenderedFileLayout::default();
+        self.layout_rebuild_count = 0;
+    }
+
+    pub fn ensure_layout(
+        &mut self,
+        file_index: usize,
+        file: &FileDiff,
+        collapse_level: CollapseLevel,
+    ) -> &RenderedFileLayout {
+        if self.cached_layout_file_index != Some(file_index)
+            || self.cached_layout_collapse_level != Some(collapse_level)
+            || self.cached_file_index != Some(file_index)
+        {
+            self.layout = crate::ui::split_pane::build_rendered_file_layout(
+                file,
+                &self.old_highlights,
+                &self.new_highlights,
+                collapse_level,
+            );
+            self.layout_rebuild_count = self.layout_rebuild_count.saturating_add(1);
+            self.cached_file_index = Some(file_index);
+            self.cached_layout_file_index = Some(file_index);
+            self.cached_layout_collapse_level = Some(collapse_level);
+        }
+
+        &self.layout
     }
 }
 
@@ -156,16 +197,13 @@ impl App {
             return;
         }
 
-        let mut next = None;
-        for &start in hunk_starts {
-            if start > self.scroll_offset {
-                next = Some(start);
-                break;
-            }
-        }
+        let next = hunk_starts
+            .iter()
+            .copied()
+            .find(|&start| start > self.scroll_offset)
+            .unwrap_or(*hunk_starts.first().expect("non-empty hunk_starts"));
 
-        self.scroll_offset = next
-            .unwrap_or(*hunk_starts.last().expect("non-empty hunk_starts"));
+        self.scroll_offset = next;
 
         if self.scroll_offset >= total_lines {
             self.scroll_offset = total_lines.saturating_sub(1);
@@ -185,21 +223,40 @@ impl App {
             return;
         }
 
-        let mut prev = None;
-        for &start in hunk_starts.iter().rev() {
-            if start < self.scroll_offset {
-                prev = Some(start);
-                break;
-            }
-        }
+        let prev = hunk_starts
+            .iter()
+            .rev()
+            .copied()
+            .find(|&start| start < self.scroll_offset)
+            .unwrap_or(*hunk_starts.last().expect("non-empty hunk_starts"));
 
-        self.scroll_offset = prev.unwrap_or(*hunk_starts.first().expect("non-empty hunk_starts"));
+        self.scroll_offset = prev;
 
         if self.scroll_offset >= total_lines {
             self.scroll_offset = total_lines.saturating_sub(1);
         }
 
         self.clamp_scroll_offset(total_lines, visible_height);
+    }
+
+    pub fn scroll_page_down(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_add(lines);
+    }
+
+    pub fn scroll_page_up(&mut self, lines: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+    }
+
+    pub fn scroll_to_bottom(&mut self, total_lines: usize, visible_height: usize) {
+        if visible_height == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+        self.scroll_offset = total_lines.saturating_sub(visible_height);
+    }
+
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = 0;
     }
 
     pub fn scroll_down(&mut self) {
@@ -216,6 +273,46 @@ impl App {
 mod tests {
     use super::*;
     use crate::diff::model::{FileStatus, Hunk};
+    use git2::{Repository, Signature};
+    use std::path::Path;
+
+    fn setup_repo_with_commit() -> (tempfile::TempDir, Repository) {
+        let tmp_dir = tempfile::tempdir().expect("create temp repo dir");
+        let repo_path = tmp_dir.path().to_path_buf();
+        let repo = Repository::init(&repo_path).expect("init test repo");
+
+        let mut config = repo.config().expect("repo config");
+        config
+            .set_str("user.name", "better-diff-test")
+            .expect("set test user.name");
+        config
+            .set_str("user.email", "test@example.com")
+            .expect("set test user.email");
+
+        std::fs::write(repo_path.join("README.md"), "test file\n").expect("write test file");
+
+        let mut index = repo.index().expect("get index");
+        index
+            .add_path(Path::new("README.md"))
+            .expect("add file to index");
+        index.write().expect("write index");
+
+        let tree_id = index.write_tree().expect("write tree");
+        let tree = repo.find_tree(tree_id).expect("load tree");
+        let sig = Signature::now("better-diff", "test@example.com").expect("signature");
+        let _ = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "initial commit",
+                &tree,
+                &[],
+            )
+            .expect("create initial commit");
+
+        (tmp_dir, repo)
+    }
 
     fn make_test_files(count: usize) -> Vec<FileDiff> {
         (0..count)
@@ -324,10 +421,64 @@ mod tests {
         app.scroll_offset = 50;
 
         app.next_hunk_with_offsets(&[10, 40], 45, 10);
-        assert_eq!(app.scroll_offset, 35); // clamped by total 45 with 10 visible rows
+        assert_eq!(app.scroll_offset, 10); // wrapped to first hunk
 
         app.prev_hunk_with_offsets(&[10, 40], 45, 10);
-        assert_eq!(app.scroll_offset, 10); // previous hunk before clamped position
+        assert_eq!(app.scroll_offset, 35); // previous hunk before clamped position
+    }
+
+    #[test]
+    fn test_hunk_navigation_wraps_between_hunks() {
+        let mut app = App::new(PathBuf::from("."));
+        app.files = make_test_files(1);
+
+        app.scroll_offset = 160;
+        app.next_hunk_with_offsets(&[20, 60, 100], 140, 20);
+        assert_eq!(app.scroll_offset, 20);
+
+        app.scroll_offset = 1;
+        app.prev_hunk_with_offsets(&[20, 60, 100], 140, 20);
+        assert_eq!(app.scroll_offset, 100);
+    }
+
+    #[test]
+    fn test_scroll_to_top_bottom_helpers() {
+        let mut app = App::new(PathBuf::from("."));
+
+        app.scroll_offset = 15;
+        app.scroll_to_top();
+        assert_eq!(app.scroll_offset, 0);
+
+        app.scroll_to_bottom(100, 15);
+        assert_eq!(app.scroll_offset, 85);
+
+        app.scroll_to_bottom(10, 20);
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_layout_cache_reuse_by_collapse_and_file() {
+        let mut app = App::new(PathBuf::from("."));
+        app.files = make_test_files(1);
+
+        app.render_cache.cached_file_index = Some(0);
+        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
+        let first_builds = app.render_cache.layout_rebuild_count;
+
+        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
+        assert_eq!(
+            app.render_cache.layout_rebuild_count,
+            first_builds,
+            "layout should be reused when file and collapse level are unchanged"
+        );
+
+        app.cycle_collapse();
+        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
+        assert_eq!(
+            app.render_cache.layout_rebuild_count,
+            first_builds + 1,
+            "layout should rebuild after collapse level changes"
+        );
     }
 
     #[test]
@@ -341,5 +492,40 @@ mod tests {
         app.scroll_offset = 42;
         app.prev_hunk_with_offsets(&[0], 3, 20);
         assert_eq!(app.scroll_offset, 0); // visible window larger than content
+    }
+
+    #[test]
+    fn test_resolve_branch_label_attached() {
+        let (_tmp_dir, repo) = setup_repo_with_commit();
+        let app = App::new(repo.path().to_path_buf());
+        let branch_name = repo
+            .head()
+            .expect("get HEAD")
+            .shorthand()
+            .unwrap_or("unknown")
+            .to_string();
+
+        assert_eq!(app.resolve_branch_label(), branch_name);
+    }
+
+    #[test]
+    fn test_resolve_branch_label_detached() {
+        let (_tmp_dir, repo) = setup_repo_with_commit();
+        let head = repo.head().expect("get HEAD");
+        let oid = head.target().expect("head target");
+        repo.set_head_detached(oid).expect("set detached");
+
+        let app = App::new(repo.path().to_path_buf());
+        let short_oid = oid.to_string();
+        let expected = format!("detached@{}", &short_oid[..8]);
+        assert_eq!(app.resolve_branch_label(), expected);
+    }
+
+    #[test]
+    fn test_resolve_branch_label_unknown_on_non_repo() {
+        let tmp_dir = tempfile::tempdir().expect("create temp path");
+        let app = App::new(tmp_dir.path().to_path_buf());
+
+        assert_eq!(app.resolve_branch_label(), "unknown");
     }
 }
