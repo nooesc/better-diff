@@ -51,6 +51,7 @@ fn can_reach_similarity_threshold(a: usize, b: usize, threshold: f64) -> bool {
 #[derive(Debug)]
 struct Block {
     file_path: PathBuf,
+    logical_file_path: PathBuf,
     kind: LineKind,
     /// The line numbers in the block (old_line_no for Deleted, new_line_no for Added).
     start_line: usize,
@@ -71,6 +72,13 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
                 _ => &file.path,
             }
         };
+        let block_logical_file_path = |kind: LineKind| -> &Path {
+            match kind {
+                LineKind::Deleted => file.old_path.as_deref().unwrap_or(&file.path),
+                LineKind::Added => file.old_path.as_deref().unwrap_or(&file.path),
+                _ => &file.path,
+            }
+        };
 
         for hunk in &file.hunks {
             let mut current_kind: Option<LineKind> = None;
@@ -85,7 +93,12 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
                     if let Some(kind) = current_kind
                         && current_lines.len() >= MIN_BLOCK_SIZE
                     {
-                        blocks.push(build_block(block_file_path(kind), kind, &current_lines));
+                            blocks.push(build_block(
+                                block_file_path(kind),
+                                block_logical_file_path(kind),
+                                kind,
+                                &current_lines,
+                            ));
                         }
                         current_kind = Some(line.kind);
                         current_lines = vec![line];
@@ -95,7 +108,12 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
                     if let Some(kind) = current_kind
                         && current_lines.len() >= MIN_BLOCK_SIZE
                     {
-                        blocks.push(build_block(block_file_path(kind), kind, &current_lines));
+                        blocks.push(build_block(
+                            block_file_path(kind),
+                            block_logical_file_path(kind),
+                            kind,
+                            &current_lines,
+                        ));
                     }
                     current_kind = None;
                     current_lines.clear();
@@ -106,7 +124,12 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
             if let Some(kind) = current_kind
                 && current_lines.len() >= MIN_BLOCK_SIZE
             {
-                blocks.push(build_block(block_file_path(kind), kind, &current_lines));
+                blocks.push(build_block(
+                    block_file_path(kind),
+                    block_logical_file_path(kind),
+                    kind,
+                    &current_lines,
+                ));
             }
         }
     }
@@ -115,7 +138,12 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
 }
 
 /// Build a Block from a slice of DiffLines.
-fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
+fn build_block(
+    file_path: &Path,
+    logical_file_path: &Path,
+    kind: LineKind,
+    lines: &[&DiffLine],
+) -> Block {
     let text_fn = |line: &DiffLine| -> String {
         let raw = match kind {
             LineKind::Deleted => line.old_str(),
@@ -140,6 +168,7 @@ fn build_block(file_path: &Path, kind: LineKind, lines: &[&DiffLine]) -> Block {
 
     Block {
         file_path: file_path.to_path_buf(),
+        logical_file_path: logical_file_path.to_path_buf(),
         kind,
         start_line,
         end_line,
@@ -164,7 +193,7 @@ fn block_score(similarity: f64, del: &Block, add: &Block) -> f64 {
         del.line_count.min(add.line_count) as f64 / del.line_count.max(add.line_count) as f64
     };
 
-    let same_file_bonus = if del.file_path == add.file_path {
+    let same_file_bonus = if del.logical_file_path == add.logical_file_path {
         let same_file_distance = (del.start_line as i64 - add.start_line as i64).abs() as f64;
         FILE_DISTANCE_BONUS * (1.0 / (1.0 + same_file_distance / 20.0))
     } else {
@@ -277,8 +306,15 @@ fn build_move_candidates(
     }
 
     for &(del_idx, del) in deleted_blocks {
-        let min_candidate_len = ((del.line_count * 4) + 4) / 5;
-        let max_candidate_len = (del.line_count * 5) / 4;
+        let min_candidate_len = del
+            .line_count
+            .checked_mul(4)
+            .and_then(|value| value.checked_add(4))
+            .map_or(usize::MAX, |value| value / 5);
+        let max_candidate_len = del
+            .line_count
+            .checked_mul(5)
+            .map_or(usize::MAX, |value| value / 4);
 
         if added_by_length.is_empty() {
             continue;
