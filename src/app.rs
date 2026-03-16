@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::diff::model::{CollapseLevel, DiffMode, FileDiff};
 use crate::syntax::HighlightSpan;
+use git2::Repository;
 
 /// Cached syntax highlights for a single file, keyed by file index.
 #[derive(Default)]
@@ -35,6 +36,7 @@ pub struct App {
     pub active_file: usize,
     pub collapse_level: CollapseLevel,
     pub scroll_offset: usize,
+    pub branch_label: String,
     pub should_quit: bool,
     pub repo_path: PathBuf,
     pub animation: Option<crate::ui::animation::AnimationState>,
@@ -49,6 +51,7 @@ impl App {
             active_file: 0,
             collapse_level: CollapseLevel::Scoped,
             scroll_offset: 0,
+            branch_label: String::from("unknown"),
             should_quit: false,
             repo_path,
             animation: None,
@@ -56,8 +59,44 @@ impl App {
         }
     }
 
+    pub fn resolve_branch_label(&self) -> String {
+        let repo = match Repository::discover(&self.repo_path) {
+            Ok(repo) => repo,
+            Err(_) => return String::from("unknown"),
+        };
+
+        let head = match repo.head() {
+            Ok(head) => head,
+            Err(_) => return String::from("unknown"),
+        };
+
+        if head.is_branch() {
+            return head.shorthand().unwrap_or("unknown").to_string();
+        }
+
+        let target = match head.target() {
+            Some(oid) => oid,
+            None => return String::from("unknown"),
+        };
+
+        let sha = target.to_string();
+        format!("detached@{}", &sha[..8])
+    }
+
     pub fn active_file(&self) -> Option<&FileDiff> {
         self.files.get(self.active_file)
+    }
+
+    pub fn clamp_scroll_offset(&mut self, total_lines: usize, visible_height: usize) {
+        if visible_height == 0 || total_lines == 0 {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        if self.scroll_offset > max_scroll {
+            self.scroll_offset = max_scroll;
+        }
     }
 
     pub fn next_file(&mut self) {
@@ -106,6 +145,63 @@ impl App {
         };
     }
 
+    pub fn next_hunk_with_offsets(
+        &mut self,
+        hunk_starts: &[usize],
+        total_lines: usize,
+        visible_height: usize,
+    ) {
+        if total_lines == 0 || hunk_starts.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let mut next = None;
+        for &start in hunk_starts {
+            if start > self.scroll_offset {
+                next = Some(start);
+                break;
+            }
+        }
+
+        self.scroll_offset = next
+            .unwrap_or(*hunk_starts.last().expect("non-empty hunk_starts"));
+
+        if self.scroll_offset >= total_lines {
+            self.scroll_offset = total_lines.saturating_sub(1);
+        }
+
+        self.clamp_scroll_offset(total_lines, visible_height);
+    }
+
+    pub fn prev_hunk_with_offsets(
+        &mut self,
+        hunk_starts: &[usize],
+        total_lines: usize,
+        visible_height: usize,
+    ) {
+        if total_lines == 0 || hunk_starts.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        let mut prev = None;
+        for &start in hunk_starts.iter().rev() {
+            if start < self.scroll_offset {
+                prev = Some(start);
+                break;
+            }
+        }
+
+        self.scroll_offset = prev.unwrap_or(*hunk_starts.first().expect("non-empty hunk_starts"));
+
+        if self.scroll_offset >= total_lines {
+            self.scroll_offset = total_lines.saturating_sub(1);
+        }
+
+        self.clamp_scroll_offset(total_lines, visible_height);
+    }
+
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_add(1);
     }
@@ -114,45 +210,6 @@ impl App {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
 
-    /// Jump scroll_offset to the start of the next hunk in the active file.
-    pub fn next_hunk(&mut self) {
-        if let Some(file) = self.files.get(self.active_file) {
-            // Compute cumulative line offsets for each hunk
-            let mut offset = 0usize;
-            for hunk in &file.hunks {
-                if offset > self.scroll_offset {
-                    self.scroll_offset = offset;
-                    self.animation = Some(crate::ui::animation::AnimationState::new());
-                    return;
-                }
-                offset += hunk.lines.len();
-            }
-            // If we didn't find a next hunk, stay where we are
-        }
-    }
-
-    /// Jump scroll_offset to the start of the previous hunk in the active file.
-    pub fn prev_hunk(&mut self) {
-        if let Some(file) = self.files.get(self.active_file) {
-            // Compute cumulative line offsets for each hunk, find the one before current
-            let mut offsets: Vec<usize> = Vec::new();
-            let mut offset = 0usize;
-            for hunk in &file.hunks {
-                offsets.push(offset);
-                offset += hunk.lines.len();
-            }
-            // Find the last hunk offset that is strictly less than current scroll_offset
-            for &o in offsets.iter().rev() {
-                if o < self.scroll_offset {
-                    self.scroll_offset = o;
-                    self.animation = Some(crate::ui::animation::AnimationState::new());
-                    return;
-                }
-            }
-            // If we're at or before the first hunk, go to 0
-            self.scroll_offset = 0;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -164,6 +221,7 @@ mod tests {
         (0..count)
             .map(|i| FileDiff {
                 path: PathBuf::from(format!("file{}.rs", i)),
+                old_path: None,
                 status: FileStatus::Modified,
                 hunks: vec![Hunk {
                     old_start: 1,
@@ -257,5 +315,31 @@ mod tests {
 
         app.cycle_collapse();
         assert_eq!(app.collapse_level, CollapseLevel::Scoped); // full cycle
+    }
+
+    #[test]
+    fn test_hunk_navigation_clamps_to_visible_rows() {
+        let mut app = App::new(PathBuf::from("."));
+        app.files = make_test_files(1);
+        app.scroll_offset = 50;
+
+        app.next_hunk_with_offsets(&[10, 40], 45, 10);
+        assert_eq!(app.scroll_offset, 35); // clamped by total 45 with 10 visible rows
+
+        app.prev_hunk_with_offsets(&[10, 40], 45, 10);
+        assert_eq!(app.scroll_offset, 10); // previous hunk before clamped position
+    }
+
+    #[test]
+    fn test_hunk_navigation_no_lines_or_invalid_viewport() {
+        let mut app = App::new(PathBuf::from("."));
+        app.scroll_offset = 42;
+
+        app.next_hunk_with_offsets(&[0], 0, 20);
+        assert_eq!(app.scroll_offset, 0);
+
+        app.scroll_offset = 42;
+        app.prev_hunk_with_offsets(&[0], 3, 20);
+        assert_eq!(app.scroll_offset, 0); // visible window larger than content
     }
 }

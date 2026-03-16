@@ -23,11 +23,38 @@ struct Cli {
     staged: bool,
 }
 
+struct TerminalGuard {
+    terminal: ratatui::DefaultTerminal,
+}
+
+impl TerminalGuard {
+    fn new() -> Result<Self> {
+        ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::EnableMouseCapture
+        )?;
+
+        let terminal = ratatui::init();
+        Ok(Self { terminal })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = ratatui::crossterm::execute!(
+            std::io::stdout(),
+            ratatui::crossterm::event::DisableMouseCapture
+        );
+        ratatui::restore();
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let repo_path = cli.path.canonicalize().unwrap_or(cli.path);
     let mut app = App::new(repo_path.clone());
+    app.branch_label = app.resolve_branch_label();
 
     if cli.staged {
         app.mode = DiffMode::Staged;
@@ -41,23 +68,9 @@ fn main() -> Result<()> {
     let (watch_tx, watch_rx) = unbounded();
     let _watcher = watcher::start_watching(&repo_path, watch_tx)?;
 
-    // Initialize terminal with mouse support
-    ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::EnableMouseCapture
-    )?;
-    let mut terminal = ratatui::init();
-
+    let mut terminal = TerminalGuard::new()?;
     // Event loop
-    let result = run_event_loop(&mut terminal, &mut app, &provider, &repo_path, &watch_rx);
-
-    // Restore terminal
-    ratatui::crossterm::execute!(
-        std::io::stdout(),
-        ratatui::crossterm::event::DisableMouseCapture
-    )?;
-    ratatui::restore();
-
+    let result = run_event_loop(&mut terminal.terminal, &mut app, &provider, &repo_path, &watch_rx);
     result
 }
 
@@ -68,7 +81,48 @@ fn run_event_loop(
     repo_path: &Path,
     watch_rx: &crossbeam_channel::Receiver<watcher::WatchEvent>,
 ) -> Result<()> {
+    let mut recompute = |app: &mut App, provider: &Git2Provider, repo_path: &Path| -> Result<()> {
+        let prev_path = app.active_file().map(|f| f.path.clone());
+        let prev_old_path = app.active_file().and_then(|f| f.old_path.clone());
+
+        app.files = provider.compute_diff(repo_path, app.mode)?;
+        app.render_cache.invalidate();
+        app.branch_label = app.resolve_branch_label();
+
+        if app.files.is_empty() {
+            app.active_file = 0;
+            app.scroll_offset = 0;
+            return Ok(());
+        }
+
+        let new_index = if let Some(path) = prev_path {
+            app.files
+                .iter()
+                .position(|f| {
+                    f.path == path || prev_old_path.as_ref().is_some_and(|p| f.old_path.as_ref() == Some(p))
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        app.active_file = new_index;
+
+        Ok(())
+    };
+
     loop {
+        let visible_rows = content_visible_rows(terminal.size()?.height);
+
+        let mut clamp_active = |app: &mut App| {
+            if let Some(file) = app.active_file() {
+                let (total_lines, _) = ui::split_pane::rendered_file_layout(file, app.collapse_level);
+                app.clamp_scroll_offset(total_lines, visible_rows);
+            } else {
+                app.scroll_offset = 0;
+            }
+        };
+        clamp_active(app);
+
         terminal.draw(|frame| ui::render(frame, app))?;
 
         // Drain all pending watch events and refresh diff at most once
@@ -77,20 +131,8 @@ fn run_event_loop(
             needs_recompute = true;
         }
         if needs_recompute {
-            let prev_path = app.active_file().map(|f| f.path.clone());
-            app.files = provider.compute_diff(repo_path, app.mode)?;
-            app.render_cache.invalidate();
-            // Try to keep the same file selected
-            if let Some(path) = prev_path {
-                let new_index = app
-                    .files
-                    .iter()
-                    .position(|f| f.path == path)
-                    .unwrap_or(0);
-                app.active_file = new_index;
-            } else {
-                app.active_file = 0;
-            }
+            recompute(app, provider, repo_path)?;
+            clamp_active(app);
         }
 
         if event::poll(Duration::from_millis(50))? {
@@ -100,11 +142,13 @@ fn run_event_loop(
                         for _ in 0..3 {
                             app.scroll_down();
                         }
+                        clamp_active(app);
                     }
                     MouseEventKind::ScrollUp => {
                         for _ in 0..3 {
                             app.scroll_up();
                         }
+                        clamp_active(app);
                     }
                     _ => {}
                 },
@@ -121,24 +165,42 @@ fn run_event_loop(
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             app.scroll_down();
+                            clamp_active(app);
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
                             app.scroll_up();
+                            clamp_active(app);
                         }
                         KeyCode::Char('n') => {
-                            app.next_hunk();
+                            if let Some(file) = app.active_file() {
+                                let (total_lines, hunk_starts) =
+                                    ui::split_pane::rendered_file_layout(file, app.collapse_level);
+
+                                app.next_hunk_with_offsets(&hunk_starts, total_lines, visible_rows);
+                                app.animation = Some(crate::ui::animation::AnimationState::new());
+                                clamp_active(app);
+                            }
                         }
                         KeyCode::Char('N') => {
-                            app.prev_hunk();
+                            if let Some(file) = app.active_file() {
+                                let (total_lines, hunk_starts) =
+                                    ui::split_pane::rendered_file_layout(file, app.collapse_level);
+
+                                app.prev_hunk_with_offsets(&hunk_starts, total_lines, visible_rows);
+                                app.animation = Some(crate::ui::animation::AnimationState::new());
+                                clamp_active(app);
+                            }
                         }
                         KeyCode::Char('s') => {
                             if app.set_mode(DiffMode::Staged) {
-                                app.files = provider.compute_diff(repo_path, app.mode)?;
+                                recompute(app, provider, repo_path)?;
+                                clamp_active(app);
                             }
                         }
                         KeyCode::Char('w') => {
                             if app.set_mode(DiffMode::WorkingTree) {
-                                app.files = provider.compute_diff(repo_path, app.mode)?;
+                                recompute(app, provider, repo_path)?;
+                                clamp_active(app);
                             }
                         }
                         KeyCode::Char('c') => {
@@ -166,4 +228,8 @@ fn run_event_loop(
             app.animation = None;
         }
     }
+}
+
+fn content_visible_rows(terminal_height: u16) -> usize {
+    terminal_height.saturating_sub(5) as usize
 }
