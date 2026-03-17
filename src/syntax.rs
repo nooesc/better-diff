@@ -1,4 +1,5 @@
 use std::sync::OnceLock;
+use std::path::Path;
 
 use ratatui::style::{Color, Style};
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
@@ -39,6 +40,18 @@ fn rust_query() -> &'static Query {
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+enum HighlightLanguage {
+    Rust,
+}
+
+fn language_for_path(path: &Path) -> Option<HighlightLanguage> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("rs") => Some(HighlightLanguage::Rust),
+        _ => None,
+    }
+}
+
 /// Parse Rust source code using tree-sitter and return the syntax tree.
 ///
 /// Returns `None` if parsing fails.
@@ -49,6 +62,24 @@ pub fn parse_rust(source: &str) -> Option<tree_sitter::Tree> {
         return None;
     }
     parser.parse(source, None)
+}
+
+fn parse_language(language: HighlightLanguage, source: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = Parser::new();
+    let ts_language = match language {
+        HighlightLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+    };
+
+    if parser.set_language(&ts_language).is_err() {
+        return None;
+    }
+    parser.parse(source, None)
+}
+
+fn syntax_query(language: HighlightLanguage) -> &'static Query {
+    match language {
+        HighlightLanguage::Rust => rust_query(),
+    }
 }
 
 /// Map a capture name to a syntax highlighting style.
@@ -91,16 +122,36 @@ fn line_for_offset(line_starts: &[usize], offset: usize) -> usize {
 /// The returned Vec has one entry per line in the source. Each entry contains
 /// the highlight spans for that line, sorted by start offset within the line.
 pub fn highlight_rust(source: &str) -> Vec<Vec<HighlightSpan>> {
+    let Some(tree) = parse_rust(source) else {
+        return vec![Vec::new(); build_line_starts(source).len()];
+    };
+
+    highlight_from_tree(tree, source, &rust_query())
+}
+
+/// Parse and highlight a source file by path-driven language detection.
+/// Unrecognized extensions fall back to no highlighting.
+pub fn highlight_file(path: &Path, source: &str) -> Vec<Vec<HighlightSpan>> {
+    let Some(language) = language_for_path(path) else {
+        return vec![Vec::new(); build_line_starts(source).len()];
+    };
+
+    let Some(tree) = parse_language(language, source) else {
+        return vec![Vec::new(); build_line_starts(source).len()];
+    };
+
+    highlight_from_tree(tree, source, syntax_query(language))
+}
+
+fn highlight_from_tree(
+    tree: tree_sitter::Tree,
+    source: &str,
+    query: &'static Query,
+) -> Vec<Vec<HighlightSpan>> {
     let line_starts = build_line_starts(source);
     let num_lines = line_starts.len(); // accounts for trailing content after last \n
     let mut result: Vec<Vec<HighlightSpan>> = vec![Vec::new(); num_lines];
-
-    let tree = match parse_rust(source) {
-        Some(tree) => tree,
-        None => return result,
-    };
-
-    let query = rust_query();
+    
     let capture_names = query.capture_names();
     let root = tree.root_node();
 

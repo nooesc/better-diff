@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind};
+use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
 use std::path::Path;
 use std::time::Duration;
 
@@ -23,7 +23,7 @@ pub fn start_watching(
                 let has_relevant = events.iter().any(|e| {
                     // Ignore .git directory changes
                     let is_git = e.path.components().any(|c| c.as_os_str() == ".git");
-                    !is_git && e.kind == DebouncedEventKind::Any
+                    !is_git
                 });
                 if has_relevant {
                     let _ = sender.send(WatchEvent::FilesChanged);

@@ -12,29 +12,50 @@ use crate::diff::model::{FileDiff, LineKind};
 /// Each row of the minimap represents a proportional region of the file's diff lines.
 /// Rows are colored by density: hot (many changes), warm, cool, or empty.
 /// A scroll position indicator shows where the current viewport is.
-pub struct Minimap<'a> {
-    file: &'a FileDiff,
+pub struct Minimap {
     scroll_offset: usize,
     visible_height: usize,
+    total_lines: usize,
+    changed_lines: Vec<bool>,
 }
 
-impl<'a> Minimap<'a> {
-    pub fn new(file: &'a FileDiff, scroll_offset: usize, visible_height: usize) -> Self {
+impl Minimap {
+    pub fn new(file: &FileDiff, scroll_offset: usize, visible_height: usize) -> Self {
+        let changed_lines = build_changed_lines(file);
+        let total_lines = changed_lines.len();
+
         Self {
-            file,
             scroll_offset,
             visible_height,
+            total_lines,
+            changed_lines,
+        }
+    }
+
+    /// Build a minimap from precomputed rendered-line metadata.
+    pub fn with_rendered_lines(
+        scroll_offset: usize,
+        visible_height: usize,
+        mut changed_lines: Vec<bool>,
+        total_lines: usize,
+    ) -> Self {
+        if changed_lines.len() < total_lines {
+            changed_lines.resize(total_lines, false);
+        } else if changed_lines.len() > total_lines {
+            changed_lines.truncate(total_lines);
+        }
+
+        Self {
+            scroll_offset,
+            visible_height,
+            total_lines,
+            changed_lines,
         }
     }
 
     /// Count total lines across all hunks (including hunk headers).
     fn total_lines(&self) -> usize {
-        let mut count = 0;
-        for hunk in &self.file.hunks {
-            count += 1; // hunk header
-            count += hunk.lines.len();
-        }
-        count
+        self.total_lines
     }
 
     /// Build a density map: for each row of the minimap area, calculate the fraction
@@ -48,18 +69,7 @@ impl<'a> Minimap<'a> {
         if total == 0 {
             return vec![0.0; rows];
         }
-
-        // Flatten all lines into a list of "is changed" booleans.
-        let mut changed: Vec<bool> = Vec::with_capacity(total);
-        for hunk in &self.file.hunks {
-            changed.push(false); // hunk header is not a change
-            for line in &hunk.lines {
-                changed.push(matches!(
-                    line.kind,
-                    LineKind::Added | LineKind::Deleted | LineKind::Modified
-                ));
-            }
-        }
+        let changed = self.changed_lines.as_slice();
 
         let mut densities = Vec::with_capacity(rows);
         for row in 0..rows {
@@ -86,7 +96,22 @@ impl<'a> Minimap<'a> {
     }
 }
 
-impl<'a> Widget for Minimap<'a> {
+fn build_changed_lines(file: &FileDiff) -> Vec<bool> {
+    let mut changed = Vec::new();
+    for hunk in &file.hunks {
+        // hunk headers are not changed lines in minimap visualization.
+        changed.push(false);
+        changed.extend(hunk.lines.iter().map(|line| {
+            matches!(
+                line.kind,
+                LineKind::Added | LineKind::Deleted | LineKind::Modified
+            )
+        }));
+    }
+    changed
+}
+
+impl Widget for Minimap {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let height = area.height as usize;
         if height == 0 || area.width == 0 {
@@ -152,6 +177,7 @@ mod tests {
     fn make_test_file() -> FileDiff {
         FileDiff {
             path: PathBuf::from("test.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 1,
@@ -195,6 +221,7 @@ mod tests {
     fn make_empty_file() -> FileDiff {
         FileDiff {
             path: PathBuf::from("empty.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![],
             old_content: String::new(),

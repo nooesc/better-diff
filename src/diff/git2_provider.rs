@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use git2::{Delta, DiffOptions, Repository};
 
-use super::folding::compute_fold_regions;
+use super::folding::compute_fold_regions_for_path;
 use super::model::{DiffLine, DiffMode, FileDiff, FileStatus, Hunk, LineKind};
 use super::moves::detect_moves;
 use super::provider::DiffProvider;
@@ -21,6 +21,7 @@ impl Git2Provider {
 
 struct RawFile {
     path: PathBuf,
+    old_path: Option<PathBuf>,
     status: FileStatus,
     hunks: Vec<RawHunk>,
 }
@@ -84,8 +85,25 @@ impl DiffProvider for Git2Provider {
                     _ => FileStatus::Modified,
                 };
 
+                let old_path = if matches!(status, FileStatus::Added) {
+                    None
+                } else {
+                    delta
+                        .old_file()
+                        .path()
+                        .map(Path::to_path_buf)
+                        .or_else(|| {
+                            if path.as_os_str().is_empty() {
+                                None
+                            } else {
+                                Some(path.clone())
+                            }
+                        })
+                };
+
                 raw_files.borrow_mut().push(RawFile {
                     path,
+                    old_path,
                     status,
                     hunks: Vec::new(),
                 });
@@ -191,9 +209,19 @@ impl DiffProvider for Git2Provider {
             }
 
             // Load file contents
-            let old_content = load_old_content(&repo, &raw_file.path).unwrap_or_default();
-            let new_content = if mode == DiffMode::Staged && raw_file.status != FileStatus::Deleted
-            {
+            let old_content = if raw_file.status == FileStatus::Added {
+                String::new()
+            } else {
+                raw_file
+                    .old_path
+                    .as_ref()
+                    .and_then(|p| load_old_content(&repo, p).ok())
+                    .unwrap_or_default()
+            };
+
+            let new_content = if raw_file.status == FileStatus::Deleted {
+                String::new()
+            } else if mode == DiffMode::Staged {
                 load_staged_content(&repo, &raw_file.path).unwrap_or_default()
             } else {
                 load_new_content(&repo, &raw_file.path).unwrap_or_default()
@@ -201,6 +229,7 @@ impl DiffProvider for Git2Provider {
 
             file_diffs.push(FileDiff {
                 path: raw_file.path,
+                old_path: raw_file.old_path,
                 status: raw_file.status,
                 hunks,
                 old_content,
@@ -212,10 +241,22 @@ impl DiffProvider for Git2Provider {
 
         // Compute structural fold regions from file contents
         for file_diff in &mut file_diffs {
+            let fold_path = if file_diff.status == FileStatus::Renamed {
+                file_diff.old_path.as_deref().unwrap_or(&file_diff.path)
+            } else {
+                &file_diff.path
+            };
+
             if !file_diff.new_content.is_empty() {
-                file_diff.fold_regions = compute_fold_regions(&file_diff.new_content);
+                file_diff.fold_regions = compute_fold_regions_for_path(
+                    fold_path,
+                    &file_diff.new_content,
+                );
             } else if !file_diff.old_content.is_empty() {
-                file_diff.fold_regions = compute_fold_regions(&file_diff.old_content);
+                file_diff.fold_regions = compute_fold_regions_for_path(
+                    fold_path,
+                    &file_diff.old_content,
+                );
             }
         }
 
@@ -246,9 +287,9 @@ fn load_new_content(repo: &Repository, path: &Path) -> Result<String> {
         .workdir()
         .context("Repository has no working directory")?;
     let full_path = workdir.join(path);
-    let content = std::fs::read_to_string(&full_path)
+    let bytes = std::fs::read(&full_path)
         .with_context(|| format!("Failed to read file: {}", full_path.display()))?;
-    Ok(content)
+    Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
 /// Load the staged (index) version of a file from the git index.

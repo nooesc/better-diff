@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tree_sitter::TreeCursor;
 
 use super::model::{FoldKind, FoldRegion};
@@ -9,6 +11,16 @@ use crate::syntax::parse_rust;
 /// structs, enums) that span more than 3 lines. Returns a list of `FoldRegion`
 /// values with descriptive labels.
 pub fn compute_fold_regions(source: &str) -> Vec<FoldRegion> {
+    compute_fold_regions_for_path(Path::new(""), source)
+}
+
+/// Compute fold regions from file content if supported. Unsupported file types return
+/// an empty list to keep fold rendering deterministic.
+pub fn compute_fold_regions_for_path(path: &Path, source: &str) -> Vec<FoldRegion> {
+    if path.extension().is_some_and(|ext| ext != "rs") {
+        return Vec::new();
+    }
+
     let tree = match parse_rust(source) {
         Some(tree) => tree,
         None => return Vec::new(),
@@ -139,11 +151,11 @@ mod tests {
 
 impl Foo {
     fn bar(&self) {
-        todo!()
+        println!("bar");
     }
 
     fn baz(&self) {
-        todo!()
+        println!("baz");
     }
 }
 "#;
