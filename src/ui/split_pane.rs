@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::diff::model::{
-    ChangeKind, CollapseLevel, DiffLine, FileDiff, FoldRegion, LineKind, MoveMatch,
+    ChangeKind, CollapseLevel, DiffLine, FileDiff, FileStatus, FoldRegion, LineKind, MoveMatch,
 };
 use crate::syntax::HighlightSpan;
 use crate::ui::animation::AnimationState;
@@ -21,6 +21,47 @@ const HIDDEN_LABEL_SUFFIX: &str = " ┈┈┈┈";
 const MOVE_BORDER_BOTTOM_WIDE: &str = "└──────────────────────────────────────┘";
 const MOVE_BORDER_BOTTOM_NARROW: &str = "└──────────────────────────────────┘";
 
+#[derive(Clone)]
+pub struct RenderedLinePair {
+    old: Line<'static>,
+    new: Line<'static>,
+    is_changed: bool,
+    is_foldable: bool,
+    old_line_no: Option<usize>,
+}
+
+#[derive(Clone, Default)]
+pub struct RenderedFileLayout {
+    pub lines: Vec<RenderedLinePair>,
+    pub hunk_start_offsets: Vec<usize>,
+}
+
+impl RenderedFileLayout {
+    pub fn total_lines(&self) -> usize {
+        self.lines.len()
+    }
+
+    pub fn hunk_starts(&self) -> &[usize] {
+        &self.hunk_start_offsets
+    }
+}
+
+fn rendered_line(
+    old: Line<'static>,
+    new: Line<'static>,
+    is_changed: bool,
+    is_foldable: bool,
+    old_line_no: Option<usize>,
+) -> RenderedLinePair {
+    RenderedLinePair {
+        old,
+        new,
+        is_changed,
+        is_foldable,
+        old_line_no,
+    }
+}
+
 /// Render a side-by-side diff view with the old file on the left and the new file on the right.
 #[allow(clippy::too_many_arguments)]
 pub fn render_split_pane(
@@ -28,10 +69,8 @@ pub fn render_split_pane(
     area: Rect,
     file: &FileDiff,
     scroll_offset: usize,
-    collapse_level: CollapseLevel,
     animation: Option<&AnimationState>,
-    old_highlights: &[Vec<HighlightSpan>],
-    new_highlights: &[Vec<HighlightSpan>],
+    layout: &RenderedFileLayout,
 ) {
     let [left_area, right_area, minimap_area] = Layout::horizontal([
         Constraint::Percentage(49),
@@ -40,19 +79,23 @@ pub fn render_split_pane(
     ])
     .areas(area);
 
-    let (old_lines, new_lines, hunk_start_offsets) =
-        build_side_by_side_lines(file, old_highlights, new_highlights, collapse_level);
+    let rendered_lines = &layout.lines;
+    let hunk_start_offsets = &layout.hunk_start_offsets;
 
-    let total_lines = old_lines.len();
+    let total_lines = rendered_lines.len();
     let visible_height = left_area.height.saturating_sub(2) as usize; // subtract 2 for borders
 
-    let mut old_visible: Vec<Line> = old_lines
+    let mut old_visible: Vec<Line> = rendered_lines
+        .iter()
+        .map(|line| line.old.clone())
         .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
         .collect();
 
-    let mut new_visible: Vec<Line> = new_lines
+    let mut new_visible: Vec<Line> = rendered_lines
+        .iter()
+        .map(|line| line.new.clone())
         .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
@@ -85,12 +128,14 @@ pub fn render_split_pane(
 
     let file_path = file.path.to_string_lossy().to_string();
 
+    let (old_title, new_title) = file_version_titles(file, &file_path);
+
     let left_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("old: {}", file_path));
+        .title(old_title);
     let right_block = Block::default()
         .borders(Borders::ALL)
-        .title(format!("new: {}", file_path));
+        .title(new_title);
 
     let left_paragraph = Paragraph::new(old_visible).block(left_block);
     let right_paragraph = Paragraph::new(new_visible).block(right_block);
@@ -99,23 +144,60 @@ pub fn render_split_pane(
     frame.render_widget(right_paragraph, right_area);
 
     frame.render_widget(
-        Minimap::new(file, scroll_offset, visible_height),
+        Minimap::with_rendered_lines(
+            scroll_offset,
+            visible_height,
+            rendered_lines.iter().map(|line| line.is_changed).collect(),
+            total_lines,
+        ),
         minimap_area,
     );
+}
+
+fn file_version_titles(file: &FileDiff, file_path: &str) -> (String, String) {
+    if file.status == FileStatus::Renamed {
+        if let Some(old_path) = &file.old_path {
+            let old = old_path.to_string_lossy().to_string();
+            return (format!("old: {old}"), format!("new: {file_path}"));
+        }
+    }
+
+    (format!("old: {file_path}"), format!("new: {file_path}"))
 }
 
 /// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
 ///
 /// Returns `(old_lines, new_lines, hunk_start_offsets)` where `hunk_start_offsets[i]` is
 /// the index into the output lines where hunk `i` begins (at its `@@` header line).
-fn build_side_by_side_lines(
+pub fn rendered_file_layout(
+    file: &FileDiff,
+    collapse_level: CollapseLevel,
+) -> (usize, Vec<usize>) {
+    let layout = build_rendered_file_layout(file, &[], &[], collapse_level);
+    (layout.total_lines(), layout.hunk_start_offsets)
+}
+
+pub fn build_rendered_file_layout(
     file: &FileDiff,
     old_highlights: &[Vec<HighlightSpan>],
     new_highlights: &[Vec<HighlightSpan>],
     collapse_level: CollapseLevel,
-) -> (Vec<Line<'static>>, Vec<Line<'static>>, Vec<usize>) {
-    let mut old_lines: Vec<Line<'static>> = Vec::new();
-    let mut new_lines: Vec<Line<'static>> = Vec::new();
+) -> RenderedFileLayout {
+    let (lines, hunk_start_offsets) =
+        build_side_by_side_rendered_lines(file, old_highlights, new_highlights, collapse_level);
+    RenderedFileLayout {
+        lines,
+        hunk_start_offsets,
+    }
+}
+
+fn build_side_by_side_rendered_lines(
+    file: &FileDiff,
+    old_highlights: &[Vec<HighlightSpan>],
+    new_highlights: &[Vec<HighlightSpan>],
+    collapse_level: CollapseLevel,
+) -> (Vec<RenderedLinePair>, Vec<usize>) {
+    let mut rendered_lines: Vec<RenderedLinePair> = Vec::new();
     let mut hunk_start_offsets: Vec<usize> = Vec::new();
 
     let fold_style = Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
@@ -152,13 +234,18 @@ fn build_side_by_side_lines(
                     collapse_level,
                     &file.fold_regions,
                 );
-                old_lines.push(Line::from(Span::styled(label.clone(), fold_style)));
-                new_lines.push(Line::from(Span::styled(label, fold_style)));
+                rendered_lines.push(rendered_line(
+                    Line::from(Span::styled(label.clone(), fold_style)),
+                    Line::from(Span::styled(label, fold_style)),
+                    false,
+                    false,
+                    None,
+                ));
             }
         }
 
         // Record the start offset for this hunk (at its header line)
-        hunk_start_offsets.push(old_lines.len());
+        hunk_start_offsets.push(rendered_lines.len());
 
         // Hunk header line on both sides
         let header = format!(
@@ -166,8 +253,13 @@ fn build_side_by_side_lines(
             hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines
         );
         let header_style = Style::default().fg(Color::DarkGray);
-        old_lines.push(Line::from(Span::styled(header.clone(), header_style)));
-        new_lines.push(Line::from(Span::styled(header, header_style)));
+        rendered_lines.push(rendered_line(
+            Line::from(Span::styled(header.clone(), header_style)),
+            Line::from(Span::styled(header, header_style)),
+            false,
+            false,
+            None,
+        ));
 
         // Collect context runs within the hunk for potential collapsing in Scoped mode
         let move_ctx = MoveContext {
@@ -184,23 +276,38 @@ fn build_side_by_side_lines(
             // within a fold region (and are not within 3 lines of a changed line).
             let collapsed = collapse_context_in_hunk(
                 &hunk_lines,
-                hunk,
                 &file.fold_regions,
                 fold_style,
             );
-            for (old_line, new_line) in collapsed {
-                old_lines.push(old_line);
-                new_lines.push(new_line);
+            for pair in collapsed {
+                rendered_lines.push(pair);
             }
         } else {
-            for (old_line, new_line) in hunk_lines {
-                old_lines.push(old_line);
-                new_lines.push(new_line);
+            for pair in hunk_lines {
+                rendered_lines.push(pair);
             }
         }
     }
 
-    (old_lines, new_lines, hunk_start_offsets)
+    (rendered_lines, hunk_start_offsets)
+}
+
+/// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
+///
+/// Returns `(old_lines, new_lines, hunk_start_offsets)` where `hunk_start_offsets[i]` is
+/// the index into the output lines where hunk `i` begins (at its `@@` header line).
+pub fn build_side_by_side_lines(
+    file: &FileDiff,
+    old_highlights: &[Vec<HighlightSpan>],
+    new_highlights: &[Vec<HighlightSpan>],
+    collapse_level: CollapseLevel,
+) -> (Vec<Line<'static>>, Vec<Line<'static>>, Vec<usize>) {
+    let layout = build_rendered_file_layout(file, old_highlights, new_highlights, collapse_level);
+    let rendered_lines = layout.lines;
+
+    let old_lines = rendered_lines.iter().map(|line| line.old.clone()).collect();
+    let new_lines = rendered_lines.iter().map(|line| line.new.clone()).collect();
+    (old_lines, new_lines, layout.hunk_start_offsets)
 }
 
 /// Bundled move-detection lookup data to avoid passing many arguments.
@@ -218,7 +325,7 @@ fn build_hunk_lines(
     old_highlights: &[Vec<HighlightSpan>],
     new_highlights: &[Vec<HighlightSpan>],
     moves: &MoveContext<'_>,
-) -> Vec<(Line<'static>, Line<'static>)> {
+) -> Vec<RenderedLinePair> {
     let move_style = Style::default().fg(Color::Magenta);
     let empty_line = || Line::from(Span::raw(String::new()));
     let mut result = Vec::new();
@@ -253,7 +360,13 @@ fn build_hunk_lines(
                 ));
                 let new_line = Line::from(new_spans);
 
-                result.push((old_line, new_line));
+                result.push(rendered_line(
+                    old_line,
+                    new_line,
+                    false,
+                    true,
+                    line.old_line_no,
+                ));
                 i += 1;
             }
 
@@ -264,10 +377,14 @@ fn build_hunk_lines(
                 {
                     let label = move_label("from", &m.source_file, m.source_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
-                    result.push((empty_line(), annotation));
+                    result.push(rendered_line(
+                        empty_line(),
+                        annotation,
+                        false,
+                        false,
+                        None,
+                    ));
                 }
-
-                let old_line = empty_line();
 
                 let line_no = format_line_no(line.new_line_no);
                 let text = line.new_str();
@@ -281,7 +398,13 @@ fn build_hunk_lines(
                     ),
                 ]);
 
-                result.push((old_line, new_line));
+                result.push(rendered_line(
+                    empty_line(),
+                    new_line,
+                    true,
+                    false,
+                    line.new_line_no,
+                ));
 
                 // Check for move destination closing annotation
                 if let Some(n) = line.new_line_no
@@ -291,7 +414,13 @@ fn build_hunk_lines(
                         MOVE_BORDER_BOTTOM_WIDE.to_string(),
                         move_style,
                     ));
-                    result.push((empty_line(), closing));
+                    result.push(rendered_line(
+                        empty_line(),
+                        closing,
+                        false,
+                        false,
+                        None,
+                    ));
                 }
 
                 i += 1;
@@ -304,7 +433,13 @@ fn build_hunk_lines(
                 {
                     let label = move_label("to", &m.dest_file, m.dest_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
-                    result.push((annotation, empty_line()));
+                    result.push(rendered_line(
+                        annotation,
+                        empty_line(),
+                        false,
+                        false,
+                        None,
+                    ));
                 }
 
                 let line_no = format_line_no(line.old_line_no);
@@ -320,7 +455,13 @@ fn build_hunk_lines(
                 ]);
 
                 let new_line = empty_line();
-                result.push((old_line, new_line));
+                result.push(rendered_line(
+                    old_line,
+                    new_line,
+                    true,
+                    false,
+                    line.old_line_no,
+                ));
 
                 // Check for move source closing annotation
                 if let Some(n) = line.old_line_no
@@ -330,7 +471,13 @@ fn build_hunk_lines(
                         MOVE_BORDER_BOTTOM_NARROW.to_string(),
                         move_style,
                     ));
-                    result.push((closing, empty_line()));
+                    result.push(rendered_line(
+                        closing,
+                        empty_line(),
+                        false,
+                        false,
+                        None,
+                    ));
                 }
 
                 i += 1;
@@ -346,7 +493,13 @@ fn build_hunk_lines(
                     let old_line = build_token_line(old_mod_line, Side::Old);
                     let new_line = build_token_line(new_mod_line, Side::New);
 
-                    result.push((old_line, new_line));
+                    result.push(rendered_line(
+                        old_line,
+                        new_line,
+                        true,
+                        true,
+                        old_mod_line.old_line_no,
+                    ));
                     i += 2;
                 } else {
                     let old_line_no = format_line_no(line.old_line_no);
@@ -369,7 +522,13 @@ fn build_hunk_lines(
                         ),
                     ]);
 
-                    result.push((old_line, new_line));
+                    result.push(rendered_line(
+                        old_line,
+                        new_line,
+                        true,
+                        true,
+                        line.old_line_no,
+                    ));
                     i += 1;
                 }
             }
@@ -436,44 +595,15 @@ fn make_gap_label(
 /// contiguous run contained by a single fold region get replaced with a single fold
 /// label line. Context lines near changed lines (within 3 lines) are kept.
 fn collapse_context_in_hunk(
-    lines: &[(Line<'static>, Line<'static>)],
-    hunk: &crate::diff::model::Hunk,
+    lines: &[RenderedLinePair],
     fold_regions: &[FoldRegion],
     fold_style: Style,
-) -> Vec<(Line<'static>, Line<'static>)> {
+) -> Vec<RenderedLinePair> {
     if fold_regions.is_empty() {
         return lines.to_vec();
     }
-
-    // Build a map from rendered-line index to the corresponding DiffLine index,
-    // accounting for Modified pairs consuming two DiffLines but one rendered line.
-    let line_kinds: Vec<(LineKind, Option<usize>)> = {
-        let mut kinds = Vec::new();
-        let mut i = 0;
-        while i < hunk.lines.len() {
-            let dl = &hunk.lines[i];
-            match dl.kind {
-                LineKind::Modified => {
-                    let has_tokens = !dl.tokens.is_empty();
-                    if has_tokens && i + 1 < hunk.lines.len() && hunk.lines[i + 1].kind == LineKind::Modified {
-                        kinds.push((LineKind::Modified, dl.old_line_no));
-                        i += 2;
-                    } else {
-                        kinds.push((LineKind::Modified, dl.old_line_no));
-                        i += 1;
-                    }
-                }
-                _ => {
-                    kinds.push((dl.kind, dl.old_line_no));
-                    i += 1;
-                }
-            }
-        }
-        kinds
-    };
-
-    // Determine which rendered lines are "changed" (non-context)
-    let is_changed: Vec<bool> = line_kinds.iter().map(|(k, _)| *k != LineKind::Context).collect();
+    let is_changed: Vec<bool> = lines.iter().map(|line| line.is_changed).collect();
+    let is_foldable: Vec<bool> = lines.iter().map(|line| line.is_foldable).collect();
 
     // Mark context lines that are within 3 lines of a change as "near change"
     let len = is_changed.len();
@@ -495,11 +625,11 @@ fn collapse_context_in_hunk(
 
     // For context lines not marked as "keep", check if they fall inside a fold region
     // and group consecutive ones for collapsing.
-    let mut result: Vec<(Line<'static>, Line<'static>)> = Vec::new();
+    let mut result: Vec<RenderedLinePair> = Vec::new();
     let mut i = 0;
 
     while i < len {
-        if keep[i] || is_changed[i] {
+        if !is_foldable[i] || keep[i] || is_changed[i] {
             result.push(lines[i].clone());
             i += 1;
         } else {
@@ -512,8 +642,8 @@ fn collapse_context_in_hunk(
             let run_count = run_end - run_start;
 
             // Get the old line numbers for this run to find a matching fold region
-            let first_old_line = line_kinds[run_start].1;
-            let last_old_line = line_kinds[run_end - 1].1;
+            let first_old_line = lines[run_start].old_line_no;
+            let last_old_line = lines[run_end - 1].old_line_no;
 
             let label = if let (Some(first), Some(last)) = (first_old_line, last_old_line) {
                 // Convert 1-indexed to 0-indexed for fold region comparison
@@ -531,7 +661,13 @@ fn collapse_context_in_hunk(
 
             let marker_old = Line::from(Span::styled(label.clone(), fold_style));
             let marker_new = Line::from(Span::styled(label, fold_style));
-            result.push((marker_old, marker_new));
+            result.push(rendered_line(
+                marker_old,
+                marker_new,
+                false,
+                false,
+                None,
+            ));
         }
     }
 
@@ -742,6 +878,7 @@ mod tests {
     fn make_test_file() -> FileDiff {
         FileDiff {
             path: PathBuf::from("test.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 1,
@@ -788,6 +925,7 @@ mod tests {
     fn make_modified_file() -> FileDiff {
         FileDiff {
             path: PathBuf::from("modified.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 5,
@@ -882,6 +1020,7 @@ mod tests {
     fn test_empty_file() {
         let file = FileDiff {
             path: PathBuf::from("empty.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![],
             old_content: String::new(),
@@ -899,6 +1038,7 @@ mod tests {
     fn make_two_hunk_file() -> FileDiff {
         FileDiff {
             path: PathBuf::from("two_hunks.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![
                 Hunk {
@@ -1063,6 +1203,7 @@ mod tests {
 
         let file = FileDiff {
             path: PathBuf::from("scoped.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 10,
@@ -1149,6 +1290,7 @@ mod tests {
     fn test_move_annotations_same_file() {
         let file = FileDiff {
             path: PathBuf::from("test.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 10,
@@ -1218,6 +1360,7 @@ mod tests {
     fn test_move_annotations_cross_file() {
         let file = FileDiff {
             path: PathBuf::from("src/old.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 5,
@@ -1301,5 +1444,41 @@ mod tests {
         // When current_file matches source_file, from_label uses "line N"
         let from_same = move_label("from", &m.source_file, m.source_start, std::path::Path::new("a.rs"));
         assert!(from_same.contains("moved from line 10"), "Got: {}", from_same);
+    }
+
+    #[test]
+    fn test_file_version_titles_show_old_and_new_for_renamed_file() {
+        let file = FileDiff {
+            path: PathBuf::from("src/new.rs"),
+            old_path: Some(PathBuf::from("src/old.rs")),
+            status: FileStatus::Renamed,
+            hunks: vec![],
+            old_content: String::new(),
+            new_content: String::new(),
+            fold_regions: vec![],
+            move_matches: vec![],
+        };
+
+        let (old_title, new_title) = file_version_titles(&file, "src/new.rs");
+        assert_eq!(old_title, "old: src/old.rs");
+        assert_eq!(new_title, "new: src/new.rs");
+    }
+
+    #[test]
+    fn test_file_version_titles_is_identical_for_non_renamed_file() {
+        let file = FileDiff {
+            path: PathBuf::from("src/main.rs"),
+            old_path: None,
+            status: FileStatus::Modified,
+            hunks: vec![],
+            old_content: String::new(),
+            new_content: String::new(),
+            fold_regions: vec![],
+            move_matches: vec![],
+        };
+
+        let (old_title, new_title) = file_version_titles(&file, "src/main.rs");
+        assert_eq!(old_title, "old: src/main.rs");
+        assert_eq!(new_title, "new: src/main.rs");
     }
 }

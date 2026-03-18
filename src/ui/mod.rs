@@ -16,6 +16,25 @@ use crate::syntax::highlight_file;
 use std::collections::HashMap;
 use std::path::Path;
 
+pub fn ensure_active_file_layout(app: &mut App) -> bool {
+    let file_index = app.active_file;
+    let file = match app.files.get(file_index) {
+        Some(file) => file,
+        None => return false,
+    };
+
+    if app.render_cache.cached_file_index != Some(file_index) {
+        let (old_highlight_path, new_highlight_path) = highlight_path_pair(file);
+
+        app.render_cache.old_highlights = highlight_file(old_highlight_path, &file.old_content);
+        app.render_cache.new_highlights = highlight_file(new_highlight_path, &file.new_content);
+        app.render_cache.cached_file_index = Some(file_index);
+    }
+
+    app.render_cache.ensure_layout(file_index, file, app.collapse_level);
+    true
+}
+
 pub fn render(frame: &mut Frame, app: &mut App) {
     let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
         Constraint::Length(1),
@@ -90,30 +109,27 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Paragraph::new(mode_line), mode_area);
 
     // --- Content area ---
-    // Populate syntax highlight cache if needed
-    if app.render_cache.cached_file_index != Some(app.active_file) {
-        if let Some(file) = app.files.get(app.active_file) {
-            let (old_highlight_path, new_highlight_path) = highlight_path_pair(file);
-
-            app.render_cache.old_highlights = highlight_file(old_highlight_path, &file.old_content);
-            app.render_cache.new_highlights = highlight_file(new_highlight_path, &file.new_content);
-            app.render_cache.cached_file_index = Some(app.active_file);
+    if app.files.get(app.active_file).is_some() {
+        let has_layout = ensure_active_file_layout(app);
+        let layout = &app.render_cache.layout;
+        let file = &app.files[app.active_file];
+        if has_layout {
+            split_pane::render_split_pane(
+                frame,
+                content_area,
+                file,
+                app.scroll_offset,
+                app.animation.as_ref(),
+                layout,
+            );
         } else {
-            app.render_cache.invalidate();
+            let content = Paragraph::new("No changes to display").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Diff View"),
+            );
+            frame.render_widget(content, content_area);
         }
-    }
-
-    if let Some(file) = app.active_file() {
-        split_pane::render_split_pane(
-            frame,
-            content_area,
-            file,
-            app.scroll_offset,
-            app.collapse_level,
-            app.animation.as_ref(),
-            &app.render_cache.old_highlights,
-            &app.render_cache.new_highlights,
-        );
     } else {
         let content = Paragraph::new("No changes to display").block(
             Block::default()
@@ -129,7 +145,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let status_line = Line::from(vec![
         Span::styled(" [q]", key), Span::styled("uit ", dim),
         Span::styled("[Tab]", key), Span::styled(" next file ", dim),
-        Span::styled("[s]", key), Span::styled("taged ", dim),
+        Span::styled("[PgUp/PgDn]", key), Span::styled(" page ", dim),
+        Span::styled("[g/G]", key), Span::styled(" top/bottom ", dim),
+        Span::styled("[s]", key), Span::styled(" staged ", dim),
         Span::styled("[w]", key), Span::styled("orking tree ", dim),
         Span::styled("[n/N]", key), Span::styled(" hunks ", dim),
         Span::styled("[c]", key), Span::styled("ollapse", dim),
@@ -139,10 +157,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
 fn file_status_label(status: FileStatus) -> &'static str {
     match status {
-        FileStatus::Added => "[+] ",
-        FileStatus::Deleted => "[-] ",
-        FileStatus::Renamed => "[R] ",
-        FileStatus::Modified => "[ ] ",
+        FileStatus::Added => "[+]",
+        FileStatus::Deleted => "[-]",
+        FileStatus::Renamed => "[R]",
+        FileStatus::Modified => "[ ]",
     }
 }
 

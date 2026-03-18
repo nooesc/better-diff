@@ -39,7 +39,10 @@ better-diff /path/to/repo
 | Key | Action |
 |---|---|
 | `j`/`k` or arrows | Scroll line by line |
+| `PgUp`/`PgDn` | Scroll by half page |
 | `n`/`N` | Jump to next/previous hunk |
+| `g`/`G` | Jump to top/bottom |
+| `Home`/`End` | Jump to top/bottom |
 | `Tab`/`Shift+Tab` | Next/previous file |
 | `1-9` | Jump to file by number |
 | `s` / `w` | Staged / working tree mode |

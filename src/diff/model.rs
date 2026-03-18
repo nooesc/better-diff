@@ -97,6 +97,7 @@ pub struct MoveMatch {
 #[derive(Debug, Clone)]
 pub struct FileDiff {
     pub path: PathBuf,
+    pub old_path: Option<PathBuf>,
     pub status: FileStatus,
     pub hunks: Vec<Hunk>,
     pub old_content: String,
@@ -177,6 +178,7 @@ mod tests {
     fn test_file_diff_creation() {
         let diff = FileDiff {
             path: PathBuf::from("src/main.rs"),
+            old_path: None,
             status: FileStatus::Modified,
             hunks: vec![Hunk {
                 old_start: 1,
