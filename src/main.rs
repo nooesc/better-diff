@@ -124,6 +124,7 @@ fn run_event_loop(
                 WatchEvent::FilesChanged {
                     worktree_index,
                     generation,
+                    changed_paths: _,
                 } => {
                     if generation == current_gen
                         && worktree_index < app.contexts.len()

@@ -12,6 +12,7 @@ pub enum WatchEvent {
     FilesChanged {
         worktree_index: usize,
         generation: u64,
+        changed_paths: Vec<PathBuf>,
     },
     WorktreeListChanged,
 }
@@ -92,18 +93,22 @@ fn create_worktree_watcher(
     generation: u64,
 ) -> Result<WatchDebouncer> {
     let sender = sender.clone();
+    let root = path.to_path_buf();
     let mut debouncer = new_debouncer(
         Duration::from_millis(50),
         move |events: DebounceEventResult| {
             if let Ok(events) = events {
-                let has_relevant = events.iter().any(|e| {
-                    let is_git = e.path.components().any(|c| c.as_os_str() == ".git");
-                    !is_git
-                });
-                if has_relevant {
+                let changed_paths: Vec<PathBuf> = events
+                    .iter()
+                    .filter(|e| !e.path.components().any(|c| c.as_os_str() == ".git"))
+                    .filter_map(|e| e.path.strip_prefix(&root).ok())
+                    .map(|p| p.to_path_buf())
+                    .collect();
+                if !changed_paths.is_empty() {
                     let _ = sender.send(WatchEvent::FilesChanged {
                         worktree_index: index,
                         generation,
+                        changed_paths,
                     });
                 }
             }
