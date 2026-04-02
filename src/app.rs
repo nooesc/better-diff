@@ -1,9 +1,14 @@
 use std::path::PathBuf;
 
+use anyhow::Result;
+use git2::Repository;
+
+use crate::diff::git2_provider::Git2Provider;
 use crate::diff::model::{CollapseLevel, DiffMode, FileDiff};
+use crate::diff::provider::DiffProvider;
 use crate::syntax::HighlightSpan;
 use crate::ui::split_pane::RenderedFileLayout;
-use git2::Repository;
+use crate::worktree::WorktreeManager;
 
 /// Cached syntax highlights for a single file, keyed by file index.
 #[derive(Default)]
@@ -70,61 +75,99 @@ impl RenderCache {
     }
 }
 
-pub struct App {
+/// Resolve the branch label from an open repository.
+pub fn resolve_branch_label(repo: &Repository) -> String {
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(_) => return String::from("unknown"),
+    };
+
+    if head.is_branch() {
+        return head.shorthand().unwrap_or("unknown").to_string();
+    }
+
+    let target = match head.target() {
+        Some(oid) => oid,
+        None => return String::from("unknown"),
+    };
+
+    let sha = target.to_string();
+    format!("detached@{}", &sha[..8])
+}
+
+/// Per-worktree state: everything that is specific to a single worktree.
+pub struct WorktreeContext {
+    pub repo_path: PathBuf,
+    pub branch_label: String,
     pub mode: DiffMode,
     pub files: Vec<FileDiff>,
     pub active_file: usize,
-    pub collapse_level: CollapseLevel,
     pub scroll_offset: usize,
-    pub branch_label: String,
-    pub should_quit: bool,
-    pub repo_path: PathBuf,
+    pub collapse_level: CollapseLevel,
     pub animation: Option<crate::ui::animation::AnimationState>,
     pub render_cache: RenderCache,
 }
 
-impl App {
-    pub fn new(repo_path: PathBuf) -> Self {
+impl WorktreeContext {
+    pub fn new(path: PathBuf, repo: &Repository) -> Self {
+        let branch_label = resolve_branch_label(repo);
         Self {
+            repo_path: path,
+            branch_label,
             mode: DiffMode::WorkingTree,
             files: Vec::new(),
             active_file: 0,
-            collapse_level: CollapseLevel::Scoped,
             scroll_offset: 0,
-            branch_label: String::from("unknown"),
-            should_quit: false,
-            repo_path,
+            collapse_level: CollapseLevel::Scoped,
             animation: None,
             render_cache: RenderCache::new(),
         }
     }
 
-    pub fn resolve_branch_label(&self) -> String {
-        let repo = match Repository::discover(&self.repo_path) {
-            Ok(repo) => repo,
-            Err(_) => return String::from("unknown"),
-        };
-
-        let head = match repo.head() {
-            Ok(head) => head,
-            Err(_) => return String::from("unknown"),
-        };
-
-        if head.is_branch() {
-            return head.shorthand().unwrap_or("unknown").to_string();
-        }
-
-        let target = match head.target() {
-            Some(oid) => oid,
-            None => return String::from("unknown"),
-        };
-
-        let sha = target.to_string();
-        format!("detached@{}", &sha[..8])
-    }
-
     pub fn active_file(&self) -> Option<&FileDiff> {
         self.files.get(self.active_file)
+    }
+
+    /// Recompute diffs for this worktree, preserving active file selection.
+    pub fn recompute(&mut self, provider: &Git2Provider) -> Result<()> {
+        let mut prev_paths: Vec<PathBuf> = Vec::new();
+        if let Some(prev_path) = self.active_file().map(|f| f.path.clone()) {
+            prev_paths.push(prev_path);
+        }
+        if let Some(prev_old_path) = self.active_file().and_then(|f| f.old_path.clone()) {
+            if !prev_paths.contains(&prev_old_path) {
+                prev_paths.push(prev_old_path);
+            }
+        }
+
+        self.files = provider.compute_diff(&self.repo_path, self.mode)?;
+        self.render_cache.invalidate();
+
+        if let Ok(repo) = Repository::discover(&self.repo_path) {
+            self.branch_label = resolve_branch_label(&repo);
+        }
+
+        if self.files.is_empty() {
+            self.active_file = 0;
+            self.scroll_offset = 0;
+            return Ok(());
+        }
+
+        let new_index = if !prev_paths.is_empty() {
+            self.files
+                .iter()
+                .position(|f| {
+                    prev_paths.iter().any(|path| {
+                        f.path == *path || f.old_path.as_deref() == Some(path.as_path())
+                    })
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        self.active_file = new_index;
+
+        Ok(())
     }
 
     pub fn clamp_scroll_offset(&mut self, total_lines: usize, visible_height: usize) {
@@ -265,7 +308,45 @@ impl App {
     pub fn scroll_up(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(1);
     }
+}
 
+pub struct App {
+    pub contexts: Vec<WorktreeContext>,
+    pub active_worktree: usize,
+    pub should_quit: bool,
+    pub manager: WorktreeManager,
+}
+
+impl App {
+    pub fn active_context(&self) -> &WorktreeContext {
+        &self.contexts[self.active_worktree]
+    }
+
+    pub fn active_context_mut(&mut self) -> &mut WorktreeContext {
+        &mut self.contexts[self.active_worktree]
+    }
+
+    pub fn next_worktree(&mut self) {
+        if self.contexts.len() > 1 {
+            self.active_worktree = (self.active_worktree + 1) % self.contexts.len();
+        }
+    }
+
+    /// Remove the context matching `path`, adjusting `active_worktree` to
+    /// maintain the invariant `active_worktree < contexts.len()`.
+    /// Returns the removed index so the caller can also remove the watcher.
+    pub fn remove_context_by_path(&mut self, path: &std::path::Path) -> Option<usize> {
+        let idx = self.contexts.iter().position(|c| c.repo_path == path)?;
+        self.contexts.remove(idx);
+        if self.contexts.is_empty() {
+            self.active_worktree = 0;
+        } else if self.active_worktree == idx {
+            self.active_worktree = idx % self.contexts.len();
+        } else if self.active_worktree > idx {
+            self.active_worktree -= 1;
+        }
+        Some(idx)
+    }
 }
 
 #[cfg(test)]
@@ -314,6 +395,20 @@ mod tests {
         (tmp_dir, repo)
     }
 
+    fn test_context() -> WorktreeContext {
+        WorktreeContext {
+            repo_path: PathBuf::from("."),
+            branch_label: String::from("test"),
+            mode: DiffMode::WorkingTree,
+            files: Vec::new(),
+            active_file: 0,
+            scroll_offset: 0,
+            collapse_level: CollapseLevel::Scoped,
+            animation: None,
+            render_cache: RenderCache::new(),
+        }
+    }
+
     fn make_test_files(count: usize) -> Vec<FileDiff> {
         (0..count)
             .map(|i| FileDiff {
@@ -337,145 +432,145 @@ mod tests {
 
     #[test]
     fn test_file_navigation() {
-        let mut app = App::new(PathBuf::from("."));
-        app.files = make_test_files(3);
+        let mut ctx = test_context();
+        ctx.files = make_test_files(3);
 
         // Start at file 0
-        assert_eq!(app.active_file, 0);
+        assert_eq!(ctx.active_file, 0);
 
         // next wraps forward
-        app.next_file();
-        assert_eq!(app.active_file, 1);
-        app.next_file();
-        assert_eq!(app.active_file, 2);
-        app.next_file();
-        assert_eq!(app.active_file, 0); // wraps around
+        ctx.next_file();
+        assert_eq!(ctx.active_file, 1);
+        ctx.next_file();
+        assert_eq!(ctx.active_file, 2);
+        ctx.next_file();
+        assert_eq!(ctx.active_file, 0); // wraps around
 
         // prev wraps backward
-        app.prev_file();
-        assert_eq!(app.active_file, 2); // wraps backward from 0
-        app.prev_file();
-        assert_eq!(app.active_file, 1);
+        ctx.prev_file();
+        assert_eq!(ctx.active_file, 2); // wraps backward from 0
+        ctx.prev_file();
+        assert_eq!(ctx.active_file, 1);
 
         // scroll_offset resets on file change
-        app.scroll_offset = 42;
-        app.next_file();
-        assert_eq!(app.scroll_offset, 0);
+        ctx.scroll_offset = 42;
+        ctx.next_file();
+        assert_eq!(ctx.scroll_offset, 0);
 
-        app.scroll_offset = 42;
-        app.prev_file();
-        assert_eq!(app.scroll_offset, 0);
+        ctx.scroll_offset = 42;
+        ctx.prev_file();
+        assert_eq!(ctx.scroll_offset, 0);
 
         // select_file bounds-checks
-        app.select_file(2);
-        assert_eq!(app.active_file, 2);
-        assert_eq!(app.scroll_offset, 0);
+        ctx.select_file(2);
+        assert_eq!(ctx.active_file, 2);
+        assert_eq!(ctx.scroll_offset, 0);
 
-        app.select_file(99); // out of bounds, no change
-        assert_eq!(app.active_file, 2);
+        ctx.select_file(99); // out of bounds, no change
+        assert_eq!(ctx.active_file, 2);
 
         // Navigation with empty files does nothing
-        let mut empty_app = App::new(PathBuf::from("."));
-        empty_app.next_file();
-        assert_eq!(empty_app.active_file, 0);
-        empty_app.prev_file();
-        assert_eq!(empty_app.active_file, 0);
+        let mut empty_ctx = test_context();
+        empty_ctx.next_file();
+        assert_eq!(empty_ctx.active_file, 0);
+        empty_ctx.prev_file();
+        assert_eq!(empty_ctx.active_file, 0);
     }
 
     #[test]
     fn test_set_mode() {
-        let mut app = App::new(PathBuf::from("."));
-        assert_eq!(app.mode, DiffMode::WorkingTree);
+        let mut ctx = test_context();
+        assert_eq!(ctx.mode, DiffMode::WorkingTree);
 
         // Switching to a different mode returns true
-        assert!(app.set_mode(DiffMode::Staged));
-        assert_eq!(app.mode, DiffMode::Staged);
+        assert!(ctx.set_mode(DiffMode::Staged));
+        assert_eq!(ctx.mode, DiffMode::Staged);
 
         // Setting the same mode returns false
-        assert!(!app.set_mode(DiffMode::Staged));
+        assert!(!ctx.set_mode(DiffMode::Staged));
 
         // Switch back
-        assert!(app.set_mode(DiffMode::WorkingTree));
-        assert_eq!(app.mode, DiffMode::WorkingTree);
+        assert!(ctx.set_mode(DiffMode::WorkingTree));
+        assert_eq!(ctx.mode, DiffMode::WorkingTree);
     }
 
     #[test]
     fn test_collapse_cycle() {
-        let mut app = App::new(PathBuf::from("."));
-        assert_eq!(app.collapse_level, CollapseLevel::Scoped); // default
+        let mut ctx = test_context();
+        assert_eq!(ctx.collapse_level, CollapseLevel::Scoped); // default
 
-        app.cycle_collapse();
-        assert_eq!(app.collapse_level, CollapseLevel::Expanded);
+        ctx.cycle_collapse();
+        assert_eq!(ctx.collapse_level, CollapseLevel::Expanded);
 
-        app.cycle_collapse();
-        assert_eq!(app.collapse_level, CollapseLevel::Tight);
+        ctx.cycle_collapse();
+        assert_eq!(ctx.collapse_level, CollapseLevel::Tight);
 
-        app.cycle_collapse();
-        assert_eq!(app.collapse_level, CollapseLevel::Scoped); // full cycle
+        ctx.cycle_collapse();
+        assert_eq!(ctx.collapse_level, CollapseLevel::Scoped); // full cycle
     }
 
     #[test]
     fn test_hunk_navigation_clamps_to_visible_rows() {
-        let mut app = App::new(PathBuf::from("."));
-        app.files = make_test_files(1);
-        app.scroll_offset = 50;
+        let mut ctx = test_context();
+        ctx.files = make_test_files(1);
+        ctx.scroll_offset = 50;
 
-        app.next_hunk_with_offsets(&[10, 40], 45, 10);
-        assert_eq!(app.scroll_offset, 10); // wrapped to first hunk
+        ctx.next_hunk_with_offsets(&[10, 40], 45, 10);
+        assert_eq!(ctx.scroll_offset, 10); // wrapped to first hunk
 
-        app.prev_hunk_with_offsets(&[10, 40], 45, 10);
-        assert_eq!(app.scroll_offset, 35); // previous hunk before clamped position
+        ctx.prev_hunk_with_offsets(&[10, 40], 45, 10);
+        assert_eq!(ctx.scroll_offset, 35); // previous hunk before clamped position
     }
 
     #[test]
     fn test_hunk_navigation_wraps_between_hunks() {
-        let mut app = App::new(PathBuf::from("."));
-        app.files = make_test_files(1);
+        let mut ctx = test_context();
+        ctx.files = make_test_files(1);
 
-        app.scroll_offset = 160;
-        app.next_hunk_with_offsets(&[20, 60, 100], 140, 20);
-        assert_eq!(app.scroll_offset, 20);
+        ctx.scroll_offset = 160;
+        ctx.next_hunk_with_offsets(&[20, 60, 100], 140, 20);
+        assert_eq!(ctx.scroll_offset, 20);
 
-        app.scroll_offset = 1;
-        app.prev_hunk_with_offsets(&[20, 60, 100], 140, 20);
-        assert_eq!(app.scroll_offset, 100);
+        ctx.scroll_offset = 1;
+        ctx.prev_hunk_with_offsets(&[20, 60, 100], 140, 20);
+        assert_eq!(ctx.scroll_offset, 100);
     }
 
     #[test]
     fn test_scroll_to_top_bottom_helpers() {
-        let mut app = App::new(PathBuf::from("."));
+        let mut ctx = test_context();
 
-        app.scroll_offset = 15;
-        app.scroll_to_top();
-        assert_eq!(app.scroll_offset, 0);
+        ctx.scroll_offset = 15;
+        ctx.scroll_to_top();
+        assert_eq!(ctx.scroll_offset, 0);
 
-        app.scroll_to_bottom(100, 15);
-        assert_eq!(app.scroll_offset, 85);
+        ctx.scroll_to_bottom(100, 15);
+        assert_eq!(ctx.scroll_offset, 85);
 
-        app.scroll_to_bottom(10, 20);
-        assert_eq!(app.scroll_offset, 0);
+        ctx.scroll_to_bottom(10, 20);
+        assert_eq!(ctx.scroll_offset, 0);
     }
 
     #[test]
     fn test_layout_cache_reuse_by_collapse_and_file() {
-        let mut app = App::new(PathBuf::from("."));
-        app.files = make_test_files(1);
+        let mut ctx = test_context();
+        ctx.files = make_test_files(1);
 
-        app.render_cache.cached_file_index = Some(0);
-        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
-        let first_builds = app.render_cache.layout_rebuild_count;
+        ctx.render_cache.cached_file_index = Some(0);
+        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
+        let first_builds = ctx.render_cache.layout_rebuild_count;
 
-        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
+        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
         assert_eq!(
-            app.render_cache.layout_rebuild_count,
+            ctx.render_cache.layout_rebuild_count,
             first_builds,
             "layout should be reused when file and collapse level are unchanged"
         );
 
-        app.cycle_collapse();
-        app.render_cache.ensure_layout(0, &app.files[0], app.collapse_level);
+        ctx.cycle_collapse();
+        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
         assert_eq!(
-            app.render_cache.layout_rebuild_count,
+            ctx.render_cache.layout_rebuild_count,
             first_builds + 1,
             "layout should rebuild after collapse level changes"
         );
@@ -483,21 +578,20 @@ mod tests {
 
     #[test]
     fn test_hunk_navigation_no_lines_or_invalid_viewport() {
-        let mut app = App::new(PathBuf::from("."));
-        app.scroll_offset = 42;
+        let mut ctx = test_context();
+        ctx.scroll_offset = 42;
 
-        app.next_hunk_with_offsets(&[0], 0, 20);
-        assert_eq!(app.scroll_offset, 0);
+        ctx.next_hunk_with_offsets(&[0], 0, 20);
+        assert_eq!(ctx.scroll_offset, 0);
 
-        app.scroll_offset = 42;
-        app.prev_hunk_with_offsets(&[0], 3, 20);
-        assert_eq!(app.scroll_offset, 0); // visible window larger than content
+        ctx.scroll_offset = 42;
+        ctx.prev_hunk_with_offsets(&[0], 3, 20);
+        assert_eq!(ctx.scroll_offset, 0); // visible window larger than content
     }
 
     #[test]
     fn test_resolve_branch_label_attached() {
         let (_tmp_dir, repo) = setup_repo_with_commit();
-        let app = App::new(repo.path().to_path_buf());
         let branch_name = repo
             .head()
             .expect("get HEAD")
@@ -505,7 +599,7 @@ mod tests {
             .unwrap_or("unknown")
             .to_string();
 
-        assert_eq!(app.resolve_branch_label(), branch_name);
+        assert_eq!(resolve_branch_label(&repo), branch_name);
     }
 
     #[test]
@@ -513,19 +607,28 @@ mod tests {
         let (_tmp_dir, repo) = setup_repo_with_commit();
         let head = repo.head().expect("get HEAD");
         let oid = head.target().expect("head target");
+        drop(head);
         repo.set_head_detached(oid).expect("set detached");
 
-        let app = App::new(repo.path().to_path_buf());
         let short_oid = oid.to_string();
         let expected = format!("detached@{}", &short_oid[..8]);
-        assert_eq!(app.resolve_branch_label(), expected);
+        assert_eq!(resolve_branch_label(&repo), expected);
     }
 
     #[test]
-    fn test_resolve_branch_label_unknown_on_non_repo() {
-        let tmp_dir = tempfile::tempdir().expect("create temp path");
-        let app = App::new(tmp_dir.path().to_path_buf());
+    fn test_resolve_branch_label_unknown_on_empty_repo() {
+        let tmp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo = Repository::init(tmp_dir.path()).expect("init repo");
+        assert_eq!(resolve_branch_label(&repo), "unknown");
+    }
 
-        assert_eq!(app.resolve_branch_label(), "unknown");
+    #[test]
+    fn test_worktree_context_new_resolves_branch() {
+        let (_tmp_dir, repo) = setup_repo_with_commit();
+        let workdir = repo.workdir().expect("has workdir").to_path_buf();
+        let ctx = WorktreeContext::new(workdir, &repo);
+        assert_ne!(ctx.branch_label, "unknown");
+        assert_eq!(ctx.mode, DiffMode::WorkingTree);
+        assert!(ctx.files.is_empty());
     }
 }
