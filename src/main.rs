@@ -120,6 +120,7 @@ fn run_event_loop(
 
         // Drain all pending watch events
         let mut recompute_indices: Vec<usize> = Vec::new();
+        let mut live_changed_paths: Vec<(usize, Vec<PathBuf>)> = Vec::new();
         let mut worktree_list_changed = false;
         let current_gen = watcher_set.generation();
 
@@ -128,13 +129,15 @@ fn run_event_loop(
                 WatchEvent::FilesChanged {
                     worktree_index,
                     generation,
-                    changed_paths: _,
+                    changed_paths,
                 } => {
-                    if generation == current_gen
-                        && worktree_index < app.contexts.len()
-                        && !recompute_indices.contains(&worktree_index)
-                    {
-                        recompute_indices.push(worktree_index);
+                    if generation == current_gen && worktree_index < app.contexts.len() {
+                        if !recompute_indices.contains(&worktree_index) {
+                            recompute_indices.push(worktree_index);
+                        }
+                        if app.live_mode {
+                            live_changed_paths.push((worktree_index, changed_paths));
+                        }
                     }
                 }
                 WatchEvent::WorktreeListChanged => {
@@ -151,6 +154,38 @@ fn run_event_loop(
         for idx in recompute_indices {
             if idx < app.contexts.len() {
                 let _ = app.contexts[idx].recompute(provider);
+            }
+        }
+
+        // Live mode: navigate to the most recently changed file
+        if app.live_mode {
+            if let Some((wt_idx, paths)) = live_changed_paths.last() {
+                let wt_idx = *wt_idx;
+                if wt_idx < app.contexts.len() {
+                    app.active_worktree = wt_idx;
+                    let ctx = &mut app.contexts[wt_idx];
+
+                    // Find the first file matching any changed path
+                    let target_file = ctx.files.iter().position(|f| {
+                        paths.iter().any(|changed| {
+                            f.path == *changed
+                                || f.old_path.as_deref() == Some(changed.as_path())
+                        })
+                    });
+
+                    if let Some(file_idx) = target_file {
+                        ctx.active_file = file_idx;
+                        ctx.scroll_offset = 0;
+
+                        // Scroll to first hunk (requires layout)
+                        if ui::ensure_active_file_layout(ctx) {
+                            let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
+                            if let Some(&first_hunk) = hunk_starts.first() {
+                                ctx.scroll_offset = first_hunk;
+                            }
+                        }
+                    }
+                }
             }
         }
 
