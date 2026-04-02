@@ -12,8 +12,11 @@ A Rust TUI program for visualizing git diffs with novel visualization features.
 - **Block move detection** — detects moved code blocks with visual linking
 - **Heat map minimap** — change density sidebar
 - **Change animations** — subtle transitions on hunk focus
+- **Syntax highlighting** — tree-sitter powered for Rust, JavaScript/JSX, TypeScript/TSX, Python, and Lua
+- **Live mode** — auto-follows file changes across worktrees, scrolls to the first hunk (great for watching agents work)
 - **Two modes** — working tree vs HEAD, staged vs HEAD
 - **Filesystem watching** — near-real-time updates via `notify`
+- **Git worktree support** — switch between worktrees with `]`
 
 ## Install
 
@@ -32,6 +35,9 @@ better-diff --staged
 
 # View changes in a specific directory
 better-diff /path/to/repo
+
+# Start in live mode (auto-follow file changes)
+better-diff --live
 ```
 
 ## Keybindings
@@ -46,8 +52,22 @@ better-diff /path/to/repo
 | `Tab`/`Shift+Tab` | Next/previous file |
 | `1-9` | Jump to file by number |
 | `s` / `w` | Staged / working tree mode |
-| `c` | Cycle collapse level |
+| `c` | Cycle collapse level (tight/scoped/expanded) |
+| `L` | Toggle live mode |
+| `]` | Switch worktree (when multiple are open) |
 | `q` / `Esc` | Quit |
+
+## Syntax Highlighting
+
+Syntax highlighting is automatic based on file extension:
+
+| Language | Extensions |
+|---|---|
+| Rust | `.rs` |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
+| TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
+| Python | `.py`, `.pyi` |
+| Lua | `.lua` |
 
 ## Built With
 
