@@ -128,6 +128,15 @@ impl WorktreeContext {
         self.files.get(self.active_file)
     }
 
+    /// Find the index of the first file whose path or old_path matches any of the given paths.
+    pub fn find_file_by_paths(&self, paths: &[PathBuf]) -> Option<usize> {
+        self.files.iter().position(|f| {
+            paths.iter().any(|path| {
+                f.path == *path || f.old_path.as_deref() == Some(path.as_path())
+            })
+        })
+    }
+
     /// Recompute diffs for this worktree, preserving active file selection.
     pub fn recompute(&mut self, provider: &Git2Provider) -> Result<()> {
         let mut prev_paths: Vec<PathBuf> = Vec::new();
@@ -154,14 +163,7 @@ impl WorktreeContext {
         }
 
         let new_index = if !prev_paths.is_empty() {
-            self.files
-                .iter()
-                .position(|f| {
-                    prev_paths.iter().any(|path| {
-                        f.path == *path || f.old_path.as_deref() == Some(path.as_path())
-                    })
-                })
-                .unwrap_or(0)
+            self.find_file_by_paths(&prev_paths).unwrap_or(0)
         } else {
             0
         };
@@ -331,10 +333,6 @@ impl App {
         if self.contexts.len() > 1 {
             self.active_worktree = (self.active_worktree + 1) % self.contexts.len();
         }
-    }
-
-    pub fn toggle_live_mode(&mut self) {
-        self.live_mode = !self.live_mode;
     }
 
     /// Remove the context matching `path`, adjusting `active_worktree` to
@@ -592,26 +590,6 @@ mod tests {
         ctx.scroll_offset = 42;
         ctx.prev_hunk_with_offsets(&[0], 3, 20);
         assert_eq!(ctx.scroll_offset, 0); // visible window larger than content
-    }
-
-    #[test]
-    fn test_toggle_live_mode() {
-        let (_tmp_dir, repo) = setup_repo_with_commit();
-        let workdir = repo.workdir().expect("has workdir").to_path_buf();
-        let manager = WorktreeManager::discover(&workdir).expect("discover");
-        let mut app = App {
-            contexts: vec![WorktreeContext::new(workdir, &repo)],
-            active_worktree: 0,
-            should_quit: false,
-            manager,
-            live_mode: false,
-        };
-
-        assert!(!app.live_mode);
-        app.toggle_live_mode();
-        assert!(app.live_mode);
-        app.toggle_live_mode();
-        assert!(!app.live_mode);
     }
 
     #[test]

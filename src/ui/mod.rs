@@ -161,7 +161,6 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         status_spans.push(Span::styled(" ]", key));
         status_spans.push(Span::styled(" wt", dim));
     }
-    // Always show the L toggle hint
     status_spans.push(Span::styled(" [L]", key));
     status_spans.push(Span::styled("ive", dim));
     let status_line = Line::from(status_spans);

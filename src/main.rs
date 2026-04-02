@@ -120,7 +120,7 @@ fn run_event_loop(
 
         // Drain all pending watch events
         let mut recompute_indices: Vec<usize> = Vec::new();
-        let mut live_changed_paths: Vec<(usize, Vec<PathBuf>)> = Vec::new();
+        let mut live_target: Option<(usize, Vec<PathBuf>)> = None;
         let mut worktree_list_changed = false;
         let current_gen = watcher_set.generation();
 
@@ -136,7 +136,7 @@ fn run_event_loop(
                             recompute_indices.push(worktree_index);
                         }
                         if app.live_mode {
-                            live_changed_paths.push((worktree_index, changed_paths));
+                            live_target = Some((worktree_index, changed_paths));
                         }
                     }
                 }
@@ -149,7 +149,7 @@ fn run_event_loop(
         if worktree_list_changed {
             handle_worktree_changes(app, provider, watcher_set)?;
             recompute_indices.clear();
-            live_changed_paths.clear();
+            live_target = None;
         }
 
         for idx in recompute_indices {
@@ -159,31 +159,20 @@ fn run_event_loop(
         }
 
         // Live mode: navigate to the most recently changed file
-        if app.live_mode {
-            if let Some((wt_idx, paths)) = live_changed_paths.last() {
-                let wt_idx = *wt_idx;
-                if wt_idx < app.contexts.len() {
-                    app.active_worktree = wt_idx;
-                    let ctx = &mut app.contexts[wt_idx];
+        if let Some((wt_idx, paths)) = live_target {
+            if wt_idx < app.contexts.len() {
+                app.active_worktree = wt_idx;
+                let ctx = &mut app.contexts[wt_idx];
 
-                    // Find the first file matching any changed path
-                    let target_file = ctx.files.iter().position(|f| {
-                        paths.iter().any(|changed| {
-                            f.path == *changed
-                                || f.old_path.as_deref() == Some(changed.as_path())
-                        })
-                    });
+                if let Some(file_idx) = ctx.find_file_by_paths(&paths) {
+                    ctx.active_file = file_idx;
+                    ctx.scroll_offset = 0;
 
-                    if let Some(file_idx) = target_file {
-                        ctx.active_file = file_idx;
-                        ctx.scroll_offset = 0;
-
-                        // Scroll to first hunk (requires layout)
-                        if ui::ensure_active_file_layout(ctx) {
-                            let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
-                            if let Some(&first_hunk) = hunk_starts.first() {
-                                ctx.scroll_offset = first_hunk;
-                            }
+                    if ui::ensure_active_file_layout(ctx) {
+                        if let Some(&first_hunk) =
+                            ctx.render_cache.layout.hunk_starts().first()
+                        {
+                            ctx.scroll_offset = first_hunk;
                         }
                     }
                 }
@@ -324,7 +313,7 @@ fn run_event_loop(
                             needs_clamp = true;
                         }
                         KeyCode::Char('L') => {
-                            app.toggle_live_mode();
+                            app.live_mode = !app.live_mode;
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                             let index = (c as usize) - ('1' as usize);
