@@ -149,6 +149,7 @@ fn run_event_loop(
         if worktree_list_changed {
             handle_worktree_changes(app, provider, watcher_set)?;
             recompute_indices.clear();
+            live_changed_paths.clear();
         }
 
         for idx in recompute_indices {
