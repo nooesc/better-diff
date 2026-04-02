@@ -38,6 +38,7 @@ pub fn ensure_active_file_layout(ctx: &mut WorktreeContext) -> bool {
 pub fn render(frame: &mut Frame, app: &mut App) {
     let worktree_count = app.contexts.len();
     let active_worktree_index = app.active_worktree;
+    let live_mode = app.live_mode;
     let ctx = app.active_context_mut();
 
     let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
@@ -142,7 +143,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // --- Status bar ---
     let key = Style::default().fg(Color::Yellow);
     let dim = Style::default().fg(Color::DarkGray);
-    let mut status_spans = vec![
+    let mut status_spans = vec![];
+    if live_mode {
+        status_spans.push(Span::styled(" LIVE ", Style::default().fg(Color::Green)));
+    }
+    status_spans.extend([
         Span::styled(" [q]", key), Span::styled("uit ", dim),
         Span::styled("[Tab]", key), Span::styled(" next file ", dim),
         Span::styled("[PgUp/PgDn]", key), Span::styled(" page ", dim),
@@ -151,11 +156,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Span::styled("[w]", key), Span::styled("orking tree ", dim),
         Span::styled("[n/N]", key), Span::styled(" hunks ", dim),
         Span::styled("[c]", key), Span::styled("ollapse", dim),
-    ];
+    ]);
     if worktree_count > 1 {
         status_spans.push(Span::styled(" ]", key));
         status_spans.push(Span::styled(" wt", dim));
     }
+    // Always show the L toggle hint
+    status_spans.push(Span::styled(" [L]", key));
+    status_spans.push(Span::styled("ive", dim));
     let status_line = Line::from(status_spans);
     frame.render_widget(Paragraph::new(status_line), status_area);
 }
