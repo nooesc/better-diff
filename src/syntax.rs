@@ -11,7 +11,7 @@ pub struct HighlightSpan {
     pub style: Style,
 }
 
-const QUERY_SOURCE: &str = r#"
+const RUST_QUERY_SOURCE: &str = r#"
     (line_comment) @comment
     (block_comment) @comment
     (string_literal) @string
@@ -32,22 +32,107 @@ const QUERY_SOURCE: &str = r#"
     (macro_invocation macro: (identifier) @macro)
 "#;
 
-fn rust_query() -> &'static Query {
-    static QUERY: OnceLock<Query> = OnceLock::new();
-    QUERY.get_or_init(|| {
-        let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-        Query::new(&language, QUERY_SOURCE).expect("Failed to compile highlight query")
-    })
+const JS_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (template_string) @string
+    (regex) @string
+    (number) @number
+    (true) @boolean
+    (false) @boolean
+    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "super" "switch" "this" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await"] @keyword
+    (function_declaration name: (identifier) @function)
+    (generator_function_declaration name: (identifier) @function)
+    (method_definition name: (property_identifier) @function)
+    (call_expression function: (identifier) @function_call)
+    (call_expression function: (member_expression property: (property_identifier) @function_call))
+    (jsx_opening_element name: (identifier) @type)
+    (jsx_closing_element name: (identifier) @type)
+    (jsx_self_closing_element name: (identifier) @type)
+"#;
+
+const TS_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (template_string) @string
+    (regex) @string
+    (number) @number
+    (true) @boolean
+    (false) @boolean
+    (type_identifier) @type
+    (predefined_type) @type
+    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "super" "switch" "this" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await" "abstract" "declare" "enum" "implements" "interface" "keyof" "namespace" "private" "protected" "public" "readonly" "type" "override"] @keyword
+    (function_declaration name: (identifier) @function)
+    (generator_function_declaration name: (identifier) @function)
+    (method_definition name: (property_identifier) @function)
+    (call_expression function: (identifier) @function_call)
+    (call_expression function: (member_expression property: (property_identifier) @function_call))
+    (jsx_opening_element name: (identifier) @type)
+    (jsx_closing_element name: (identifier) @type)
+    (jsx_self_closing_element name: (identifier) @type)
+"#;
+
+const PYTHON_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (integer) @number
+    (float) @number
+    (true) @boolean
+    (false) @boolean
+    (none) @boolean
+    ["and" "as" "assert" "async" "await" "break" "class" "continue" "def" "del" "elif" "else" "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not" "or" "pass" "raise" "return" "try" "while" "with" "yield"] @keyword
+    (function_definition name: (identifier) @function)
+    (call function: (identifier) @function_call)
+    (call function: (attribute attribute: (identifier) @function_call))
+    (decorator) @macro
+"#;
+
+const LUA_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (number) @number
+    ["function" "end" "local" "if" "then" "else" "elseif" "for" "while" "do" "repeat" "until" "return" "break" "in" "and" "or" "not" "goto" "nil" "true" "false"] @keyword
+    (function_declaration name: (identifier) @function)
+    (function_call name: (identifier) @function_call)
+"#;
+
+/// Define a cached query function. Each invocation creates a function that lazily
+/// compiles the tree-sitter highlight query once via `OnceLock`.
+macro_rules! define_query {
+    ($fn_name:ident, $ts_lang:expr, $query_source:expr) => {
+        fn $fn_name() -> &'static Query {
+            static QUERY: OnceLock<Query> = OnceLock::new();
+            QUERY.get_or_init(|| {
+                let language: tree_sitter::Language = $ts_lang.into();
+                Query::new(&language, $query_source)
+                    .expect(concat!("Failed to compile ", stringify!($fn_name), " highlight query"))
+            })
+        }
+    };
 }
+
+define_query!(rust_query, tree_sitter_rust::LANGUAGE, RUST_QUERY_SOURCE);
+define_query!(js_query, tree_sitter_javascript::LANGUAGE, JS_QUERY_SOURCE);
+define_query!(ts_query, tree_sitter_typescript::LANGUAGE_TSX, TS_QUERY_SOURCE);
+define_query!(python_query, tree_sitter_python::LANGUAGE, PYTHON_QUERY_SOURCE);
+define_query!(lua_query, tree_sitter_lua::LANGUAGE, LUA_QUERY_SOURCE);
 
 #[derive(Debug, Clone, Copy)]
 enum HighlightLanguage {
     Rust,
+    JavaScript,
+    TypeScript,
+    Python,
+    Lua,
 }
 
 fn language_for_path(path: &Path) -> Option<HighlightLanguage> {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("rs") => Some(HighlightLanguage::Rust),
+        Some("js" | "jsx" | "mjs" | "cjs") => Some(HighlightLanguage::JavaScript),
+        Some("ts" | "tsx" | "mts" | "cts") => Some(HighlightLanguage::TypeScript),
+        Some("py" | "pyi") => Some(HighlightLanguage::Python),
+        Some("lua") => Some(HighlightLanguage::Lua),
         _ => None,
     }
 }
@@ -56,18 +141,17 @@ fn language_for_path(path: &Path) -> Option<HighlightLanguage> {
 ///
 /// Returns `None` if parsing fails.
 pub fn parse_rust(source: &str) -> Option<tree_sitter::Tree> {
-    let language: tree_sitter::Language = tree_sitter_rust::LANGUAGE.into();
-    let mut parser = Parser::new();
-    if parser.set_language(&language).is_err() {
-        return None;
-    }
-    parser.parse(source, None)
+    parse_language(HighlightLanguage::Rust, source)
 }
 
 fn parse_language(language: HighlightLanguage, source: &str) -> Option<tree_sitter::Tree> {
     let mut parser = Parser::new();
     let ts_language = match language {
         HighlightLanguage::Rust => tree_sitter_rust::LANGUAGE.into(),
+        HighlightLanguage::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+        HighlightLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        HighlightLanguage::Python => tree_sitter_python::LANGUAGE.into(),
+        HighlightLanguage::Lua => tree_sitter_lua::LANGUAGE.into(),
     };
 
     if parser.set_language(&ts_language).is_err() {
@@ -79,6 +163,10 @@ fn parse_language(language: HighlightLanguage, source: &str) -> Option<tree_sitt
 fn syntax_query(language: HighlightLanguage) -> &'static Query {
     match language {
         HighlightLanguage::Rust => rust_query(),
+        HighlightLanguage::JavaScript => js_query(),
+        HighlightLanguage::TypeScript => ts_query(),
+        HighlightLanguage::Python => python_query(),
+        HighlightLanguage::Lua => lua_query(),
     }
 }
 
