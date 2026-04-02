@@ -22,6 +22,9 @@ struct Cli {
 
     #[arg(short, long)]
     staged: bool,
+
+    #[arg(long, help = "Start in live mode (auto-follow file changes)")]
+    live: bool,
 }
 
 struct TerminalGuard {
@@ -90,6 +93,7 @@ fn main() -> Result<()> {
         active_worktree,
         should_quit: false,
         manager,
+        live_mode: cli.live,
     };
 
     let mut terminal = TerminalGuard::new()?;
@@ -282,6 +286,9 @@ fn run_event_loop(
                         KeyCode::Char('c') => {
                             app.active_context_mut().cycle_collapse();
                             needs_clamp = true;
+                        }
+                        KeyCode::Char('L') => {
+                            app.toggle_live_mode();
                         }
                         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                             let index = (c as usize) - ('1' as usize);

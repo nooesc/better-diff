@@ -315,6 +315,7 @@ pub struct App {
     pub active_worktree: usize,
     pub should_quit: bool,
     pub manager: WorktreeManager,
+    pub live_mode: bool,
 }
 
 impl App {
@@ -330,6 +331,10 @@ impl App {
         if self.contexts.len() > 1 {
             self.active_worktree = (self.active_worktree + 1) % self.contexts.len();
         }
+    }
+
+    pub fn toggle_live_mode(&mut self) {
+        self.live_mode = !self.live_mode;
     }
 
     /// Remove the context matching `path`, adjusting `active_worktree` to
@@ -587,6 +592,26 @@ mod tests {
         ctx.scroll_offset = 42;
         ctx.prev_hunk_with_offsets(&[0], 3, 20);
         assert_eq!(ctx.scroll_offset, 0); // visible window larger than content
+    }
+
+    #[test]
+    fn test_toggle_live_mode() {
+        let (_tmp_dir, repo) = setup_repo_with_commit();
+        let workdir = repo.workdir().expect("has workdir").to_path_buf();
+        let manager = WorktreeManager::discover(&workdir).expect("discover");
+        let mut app = App {
+            contexts: vec![WorktreeContext::new(workdir, &repo)],
+            active_worktree: 0,
+            should_quit: false,
+            manager,
+            live_mode: false,
+        };
+
+        assert!(!app.live_mode);
+        app.toggle_live_mode();
+        assert!(app.live_mode);
+        app.toggle_live_mode();
+        assert!(!app.live_mode);
     }
 
     #[test]
