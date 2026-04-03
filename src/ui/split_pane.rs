@@ -102,9 +102,31 @@ fn rendered_line(
     }
 }
 
-/// Render a side-by-side diff view with the old file on the left and the new file on the right.
+/// Minimum terminal width for side-by-side view. Below this, unified view is used.
+const SPLIT_MIN_WIDTH: u16 = 120;
+
+/// Render a diff view — side-by-side when wide enough, unified when narrow.
 #[allow(clippy::too_many_arguments)]
 pub fn render_split_pane(
+    frame: &mut Frame,
+    area: Rect,
+    file: &FileDiff,
+    scroll_offset: usize,
+    animation: Option<&AnimationState>,
+    layout: &RenderedFileLayout,
+    search_matches: &[crate::app::SearchMatch],
+    current_search_match: usize,
+) {
+    if area.width < SPLIT_MIN_WIDTH {
+        render_unified(frame, area, file, scroll_offset, animation, layout, search_matches, current_search_match);
+    } else {
+        render_side_by_side(frame, area, file, scroll_offset, animation, layout, search_matches, current_search_match);
+    }
+}
+
+/// Render a side-by-side diff view with the old file on the left and the new file on the right.
+#[allow(clippy::too_many_arguments)]
+fn render_side_by_side(
     frame: &mut Frame,
     area: Rect,
     file: &FileDiff,
@@ -130,7 +152,6 @@ pub fn render_split_pane(
     let mut old_visible: Vec<Line> = rendered_lines
         .iter()
         .map(|line| line.old.clone())
-        .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
         .collect();
@@ -138,22 +159,171 @@ pub fn render_split_pane(
     let mut new_visible: Vec<Line> = rendered_lines
         .iter()
         .map(|line| line.new.clone())
-        .into_iter()
         .skip(scroll_offset)
         .take(visible_height)
         .collect();
 
     // Apply hunk flash animation if active
+    apply_flash_animation(animation, hunk_start_offsets, total_lines, scroll_offset, visible_height, &mut old_visible, &mut new_visible);
+
+    // Apply search match highlighting
+    apply_search_highlights(search_matches, current_search_match, scroll_offset, visible_height, &mut old_visible, &mut new_visible);
+
+    let file_path = file.path.to_string_lossy().to_string();
+
+    let (old_title, new_title) = file_version_titles(file, &file_path);
+
+    let left_block = Block::default()
+        .borders(Borders::ALL)
+        .title(old_title);
+    let right_block = Block::default()
+        .borders(Borders::ALL)
+        .title(new_title);
+
+    let left_paragraph = Paragraph::new(old_visible).block(left_block);
+    let right_paragraph = Paragraph::new(new_visible).block(right_block);
+
+    frame.render_widget(left_paragraph, left_area);
+    frame.render_widget(right_paragraph, right_area);
+
+    frame.render_widget(
+        Minimap::with_rendered_lines(
+            scroll_offset,
+            visible_height,
+            rendered_lines.iter().map(|line| line.is_changed).collect(),
+            total_lines,
+        ),
+        minimap_area,
+    );
+}
+
+/// Render a unified diff view (interleaved old/new lines in a single column).
+#[allow(clippy::too_many_arguments)]
+fn render_unified(
+    frame: &mut Frame,
+    area: Rect,
+    file: &FileDiff,
+    scroll_offset: usize,
+    animation: Option<&AnimationState>,
+    layout: &RenderedFileLayout,
+    search_matches: &[crate::app::SearchMatch],
+    current_search_match: usize,
+) {
+    let [content_area, minimap_area] = Layout::horizontal([
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ])
+    .areas(area);
+
+    let rendered_lines = &layout.lines;
+    let hunk_start_offsets = &layout.hunk_start_offsets;
+    let total_lines = rendered_lines.len();
+    let visible_height = content_area.height.saturating_sub(2) as usize;
+
+    // Build unified lines: for changed lines show old then new; for context show once
+    let mut unified: Vec<Line> = Vec::new();
+    for pair in rendered_lines.iter() {
+        let old_empty = line_text_content(&pair.old).trim().is_empty();
+        let new_empty = line_text_content(&pair.new).trim().is_empty();
+        if pair.is_changed {
+            if !old_empty {
+                unified.push(pair.old.clone());
+            }
+            if !new_empty {
+                unified.push(pair.new.clone());
+            }
+            if old_empty && new_empty {
+                unified.push(pair.new.clone());
+            }
+        } else {
+            // Context line — show either side (they are identical)
+            unified.push(pair.new.clone());
+        }
+    }
+
+    let mut visible: Vec<Line> = unified
+        .iter()
+        .skip(scroll_offset)
+        .take(visible_height)
+        .cloned()
+        .collect();
+
+    // Apply flash animation
     if let Some(anim) = animation {
         let flash_intensity = ((1.0 - anim.progress()) * 40.0) as u8;
         if flash_intensity > 0 {
-            // Find the first hunk that starts at or after scroll_offset
             let (hunk_start, hunk_end) = find_current_hunk_range(
-                &hunk_start_offsets,
+                hunk_start_offsets,
                 total_lines,
                 scroll_offset,
             );
-            // Convert absolute line indices to visible-window-relative indices
+            let vis_start = hunk_start.saturating_sub(scroll_offset);
+            let vis_end = hunk_end.saturating_sub(scroll_offset).min(visible_height);
+            for i in vis_start..vis_end {
+                if i < visible.len() {
+                    visible[i] = apply_flash_to_line(visible[i].clone(), flash_intensity);
+                }
+            }
+        }
+    }
+
+    // Apply search highlights (both sides map to same unified list)
+    for (match_idx, m) in search_matches.iter().enumerate() {
+        let vis_idx = m.line_index.saturating_sub(scroll_offset);
+        if m.line_index < scroll_offset || vis_idx >= visible_height || vis_idx >= visible.len() {
+            continue;
+        }
+        let is_current = match_idx == current_search_match;
+        let highlight_style = if is_current {
+            Style::default().bg(theme::current().ui_search_current_bg).fg(theme::current().ui_search_current_fg)
+        } else {
+            Style::default().bg(theme::current().ui_search_other_bg).fg(theme::current().ui_search_other_fg)
+        };
+        visible[vis_idx] = apply_search_highlight(
+            visible[vis_idx].clone(),
+            m.byte_start,
+            m.byte_end,
+            highlight_style,
+        );
+    }
+
+    let file_path = file.path.to_string_lossy().to_string();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(file_path);
+
+    let paragraph = Paragraph::new(visible).block(block);
+    frame.render_widget(paragraph, content_area);
+
+    frame.render_widget(
+        Minimap::with_rendered_lines(
+            scroll_offset,
+            visible_height,
+            rendered_lines.iter().map(|line| line.is_changed).collect(),
+            total_lines,
+        ),
+        minimap_area,
+    );
+}
+
+/// Apply hunk flash animation to visible lines.
+fn apply_flash_animation(
+    animation: Option<&AnimationState>,
+    hunk_start_offsets: &[usize],
+    total_lines: usize,
+    scroll_offset: usize,
+    visible_height: usize,
+    old_visible: &mut [Line<'static>],
+    new_visible: &mut [Line<'static>],
+) {
+    if let Some(anim) = animation {
+        let flash_intensity = ((1.0 - anim.progress()) * 40.0) as u8;
+        if flash_intensity > 0 {
+            let (hunk_start, hunk_end) = find_current_hunk_range(
+                hunk_start_offsets,
+                total_lines,
+                scroll_offset,
+            );
             let vis_start = hunk_start.saturating_sub(scroll_offset);
             let vis_end = hunk_end.saturating_sub(scroll_offset).min(visible_height);
 
@@ -167,8 +337,17 @@ pub fn render_split_pane(
             }
         }
     }
+}
 
-    // Apply search match highlighting
+/// Apply search match highlighting to visible lines.
+fn apply_search_highlights(
+    search_matches: &[crate::app::SearchMatch],
+    current_search_match: usize,
+    scroll_offset: usize,
+    visible_height: usize,
+    old_visible: &mut Vec<Line<'static>>,
+    new_visible: &mut Vec<Line<'static>>,
+) {
     for (match_idx, m) in search_matches.iter().enumerate() {
         let vis_idx = m.line_index.saturating_sub(scroll_offset);
         if m.line_index < scroll_offset || vis_idx >= visible_height {
@@ -198,33 +377,6 @@ pub fn render_split_pane(
             );
         }
     }
-
-    let file_path = file.path.to_string_lossy().to_string();
-
-    let (old_title, new_title) = file_version_titles(file, &file_path);
-
-    let left_block = Block::default()
-        .borders(Borders::ALL)
-        .title(old_title);
-    let right_block = Block::default()
-        .borders(Borders::ALL)
-        .title(new_title);
-
-    let left_paragraph = Paragraph::new(old_visible).block(left_block);
-    let right_paragraph = Paragraph::new(new_visible).block(right_block);
-
-    frame.render_widget(left_paragraph, left_area);
-    frame.render_widget(right_paragraph, right_area);
-
-    frame.render_widget(
-        Minimap::with_rendered_lines(
-            scroll_offset,
-            visible_height,
-            rendered_lines.iter().map(|line| line.is_changed).collect(),
-            total_lines,
-        ),
-        minimap_area,
-    );
 }
 
 fn file_version_titles(file: &FileDiff, file_path: &str) -> (String, String) {
