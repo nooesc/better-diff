@@ -40,7 +40,7 @@ const JS_QUERY_SOURCE: &str = r#"
     (number) @number
     (true) @boolean
     (false) @boolean
-    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "super" "switch" "this" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await"] @keyword
+    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "switch" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await"] @keyword
     (function_declaration name: (identifier) @function)
     (generator_function_declaration name: (identifier) @function)
     (method_definition name: (property_identifier) @function)
@@ -61,7 +61,7 @@ const TS_QUERY_SOURCE: &str = r#"
     (false) @boolean
     (type_identifier) @type
     (predefined_type) @type
-    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "super" "switch" "this" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await" "abstract" "declare" "enum" "implements" "interface" "keyof" "namespace" "private" "protected" "public" "readonly" "type" "override"] @keyword
+    ["break" "case" "catch" "class" "const" "continue" "debugger" "default" "delete" "do" "else" "export" "extends" "finally" "for" "function" "if" "import" "in" "instanceof" "let" "new" "of" "return" "static" "switch" "throw" "try" "typeof" "var" "void" "while" "with" "yield" "async" "await" "abstract" "declare" "enum" "implements" "interface" "keyof" "namespace" "private" "protected" "public" "readonly" "type" "override"] @keyword
     (function_declaration name: (identifier) @function)
     (generator_function_declaration name: (identifier) @function)
     (method_definition name: (property_identifier) @function)
@@ -91,9 +91,174 @@ const LUA_QUERY_SOURCE: &str = r#"
     (comment) @comment
     (string) @string
     (number) @number
-    ["function" "end" "local" "if" "then" "else" "elseif" "for" "while" "do" "repeat" "until" "return" "break" "in" "and" "or" "not" "goto" "nil" "true" "false"] @keyword
+    ["function" "end" "local" "if" "then" "else" "elseif" "for" "while" "do" "repeat" "until" "return" "in" "goto"] @keyword
     (function_declaration name: (identifier) @function)
     (function_call name: (identifier) @function_call)
+"#;
+
+const GO_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (interpreted_string_literal) @string
+    (raw_string_literal) @string
+    (rune_literal) @string
+    (int_literal) @number
+    (float_literal) @number
+    (imaginary_literal) @number
+    (true) @boolean
+    (false) @boolean
+    (nil) @boolean
+    (type_identifier) @type
+    ["func" "return" "if" "else" "for" "range" "switch" "case" "default" "break" "continue" "go" "defer" "select" "chan" "map" "struct" "interface" "package" "import" "var" "const" "type" "fallthrough" "goto"] @keyword
+    (function_declaration name: (identifier) @function)
+    (method_declaration name: (field_identifier) @function)
+    (call_expression function: (identifier) @function_call)
+    (call_expression function: (selector_expression field: (field_identifier) @function_call))
+"#;
+
+const C_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string_literal) @string
+    (char_literal) @string
+    (number_literal) @number
+    (true) @boolean
+    (false) @boolean
+    (null) @boolean
+    (type_identifier) @type
+    (primitive_type) @type
+    ["if" "else" "switch" "case" "default" "while" "do" "for" "return" "break" "continue" "goto" "typedef" "struct" "union" "enum" "extern" "static" "const" "sizeof"] @keyword
+    (function_declarator declarator: (identifier) @function)
+    (call_expression function: (identifier) @function_call)
+"#;
+
+const CPP_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string_literal) @string
+    (raw_string_literal) @string
+    (char_literal) @string
+    (number_literal) @number
+    (true) @boolean
+    (false) @boolean
+    (null) @boolean
+    (type_identifier) @type
+    (primitive_type) @type
+    ["if" "else" "switch" "case" "default" "while" "do" "for" "return" "break" "continue" "goto" "typedef" "struct" "union" "enum" "extern" "static" "const" "sizeof" "class" "public" "private" "protected" "virtual" "override" "template" "typename" "namespace" "using" "new" "delete" "try" "catch" "throw" "constexpr" "inline"] @keyword
+    (function_declarator declarator: (identifier) @function)
+    (call_expression function: (identifier) @function_call)
+"#;
+
+const BASH_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (raw_string) @string
+    (heredoc_body) @string
+    ["if" "then" "else" "elif" "fi" "case" "esac" "for" "while" "until" "do" "done" "in" "function" "local" "declare" "export" "unset"] @keyword
+    (function_definition name: (word) @function)
+    (command_name (word) @function_call)
+"#;
+
+const JSON_QUERY_SOURCE: &str = r#"
+    (string) @string
+    (number) @number
+    (true) @boolean
+    (false) @boolean
+    (null) @boolean
+"#;
+
+const TOML_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (integer) @number
+    (float) @number
+    (boolean) @boolean
+    (bare_key) @keyword
+    (table (bare_key) @type)
+    (table_array_element (bare_key) @type)
+"#;
+
+const HTML_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (tag_name) @keyword
+    (attribute_name) @type
+    (quoted_attribute_value) @string
+    (doctype) @macro
+"#;
+
+const CSS_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string_value) @string
+    (color_value) @number
+    (integer_value) @number
+    (float_value) @number
+    (property_name) @keyword
+    (tag_name) @type
+    (class_name) @type
+    (id_name) @type
+    (function_name) @function_call
+"#;
+
+const JAVA_QUERY_SOURCE: &str = r#"
+    (line_comment) @comment
+    (block_comment) @comment
+    (string_literal) @string
+    (character_literal) @string
+    (decimal_integer_literal) @number
+    (hex_integer_literal) @number
+    (decimal_floating_point_literal) @number
+    (true) @boolean
+    (false) @boolean
+    (null_literal) @boolean
+    (type_identifier) @type
+    ["abstract" "assert" "break" "case" "catch" "class" "continue" "default" "do" "else" "enum" "extends" "final" "finally" "for" "if" "implements" "import" "instanceof" "interface" "new" "package" "private" "protected" "public" "return" "static" "switch" "synchronized" "throw" "throws" "try" "volatile" "while"] @keyword
+    (method_declaration name: (identifier) @function)
+    (method_invocation name: (identifier) @function_call)
+"#;
+
+const RUBY_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (regex) @string
+    (simple_symbol) @string
+    (integer) @number
+    (float) @number
+    (true) @boolean
+    (false) @boolean
+    (nil) @boolean
+    ["def" "end" "class" "module" "if" "else" "elsif" "unless" "while" "until" "for" "do" "begin" "rescue" "ensure" "return" "yield" "break" "next" "case" "when" "then" "in" "and" "or" "not"] @keyword
+    (method name: (identifier) @function)
+    (call method: (identifier) @function_call)
+"#;
+
+const CSHARP_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string_literal) @string
+    (verbatim_string_literal) @string
+    (character_literal) @string
+    (integer_literal) @number
+    (real_literal) @number
+    (boolean_literal) @boolean
+    (null_literal) @boolean
+    (predefined_type) @type
+    (generic_name (identifier) @type)
+    ["abstract" "as" "base" "break" "case" "catch" "class" "const" "continue" "default" "do" "else" "enum" "event" "extern" "finally" "for" "foreach" "goto" "if" "in" "interface" "internal" "is" "namespace" "new" "operator" "out" "override" "params" "private" "protected" "public" "readonly" "ref" "return" "sealed" "sizeof" "static" "struct" "switch" "throw" "try" "typeof" "unsafe" "using" "virtual" "volatile" "while" "async" "await" "var"] @keyword
+    (method_declaration name: (identifier) @function)
+    (invocation_expression function: (identifier) @function_call)
+"#;
+
+const ELIXIR_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    (string) @string
+    (integer) @number
+    (float) @number
+    (boolean) @boolean
+    (nil) @boolean
+    (atom) @string
+    ["do" "end" "fn" "after" "rescue" "catch" "else" "when" "and" "or" "not" "in"] @keyword
+    (call target: (identifier) @function_call)
+"#;
+
+const ZIG_QUERY_SOURCE: &str = r#"
+    (comment) @comment
+    ["fn" "return" "if" "else" "for" "while" "break" "continue" "switch" "const" "var" "pub" "extern" "struct" "enum" "union" "error" "test" "defer" "try" "catch" "unreachable" "comptime" "inline"] @keyword
 "#;
 
 /// Define a cached query function. Each invocation creates a function that lazily
@@ -116,6 +281,19 @@ define_query!(js_query, tree_sitter_javascript::LANGUAGE, JS_QUERY_SOURCE);
 define_query!(ts_query, tree_sitter_typescript::LANGUAGE_TSX, TS_QUERY_SOURCE);
 define_query!(python_query, tree_sitter_python::LANGUAGE, PYTHON_QUERY_SOURCE);
 define_query!(lua_query, tree_sitter_lua::LANGUAGE, LUA_QUERY_SOURCE);
+define_query!(go_query, tree_sitter_go::LANGUAGE, GO_QUERY_SOURCE);
+define_query!(c_query, tree_sitter_c::LANGUAGE, C_QUERY_SOURCE);
+define_query!(cpp_query, tree_sitter_cpp::LANGUAGE, CPP_QUERY_SOURCE);
+define_query!(bash_query, tree_sitter_bash::LANGUAGE, BASH_QUERY_SOURCE);
+define_query!(json_query, tree_sitter_json::LANGUAGE, JSON_QUERY_SOURCE);
+define_query!(toml_query, tree_sitter_toml_ng::LANGUAGE, TOML_QUERY_SOURCE);
+define_query!(html_query, tree_sitter_html::LANGUAGE, HTML_QUERY_SOURCE);
+define_query!(css_query, tree_sitter_css::LANGUAGE, CSS_QUERY_SOURCE);
+define_query!(java_query, tree_sitter_java::LANGUAGE, JAVA_QUERY_SOURCE);
+define_query!(ruby_query, tree_sitter_ruby::LANGUAGE, RUBY_QUERY_SOURCE);
+define_query!(csharp_query, tree_sitter_c_sharp::LANGUAGE, CSHARP_QUERY_SOURCE);
+define_query!(elixir_query, tree_sitter_elixir::LANGUAGE, ELIXIR_QUERY_SOURCE);
+define_query!(zig_query, tree_sitter_zig::LANGUAGE, ZIG_QUERY_SOURCE);
 
 #[derive(Debug, Clone, Copy)]
 enum HighlightLanguage {
@@ -124,15 +302,48 @@ enum HighlightLanguage {
     TypeScript,
     Python,
     Lua,
+    Go,
+    C,
+    Cpp,
+    Bash,
+    Json,
+    Toml,
+    Html,
+    Css,
+    Java,
+    Ruby,
+    CSharp,
+    Elixir,
+    Zig,
 }
 
 fn language_for_path(path: &Path) -> Option<HighlightLanguage> {
+    // Also check full filename for extensionless files like Dockerfile, Makefile
+    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    match filename {
+        "Dockerfile" | "Containerfile" => return Some(HighlightLanguage::Bash),
+        "Makefile" | "GNUmakefile" => return Some(HighlightLanguage::Bash),
+        _ => {}
+    }
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("rs") => Some(HighlightLanguage::Rust),
         Some("js" | "jsx" | "mjs" | "cjs") => Some(HighlightLanguage::JavaScript),
         Some("ts" | "tsx" | "mts" | "cts") => Some(HighlightLanguage::TypeScript),
         Some("py" | "pyi") => Some(HighlightLanguage::Python),
         Some("lua") => Some(HighlightLanguage::Lua),
+        Some("go") => Some(HighlightLanguage::Go),
+        Some("c" | "h") => Some(HighlightLanguage::C),
+        Some("cc" | "cpp" | "cxx" | "hpp" | "hxx" | "hh") => Some(HighlightLanguage::Cpp),
+        Some("sh" | "bash" | "zsh") => Some(HighlightLanguage::Bash),
+        Some("json" | "jsonc") => Some(HighlightLanguage::Json),
+        Some("toml") => Some(HighlightLanguage::Toml),
+        Some("html" | "htm") => Some(HighlightLanguage::Html),
+        Some("css" | "scss") => Some(HighlightLanguage::Css),
+        Some("java") => Some(HighlightLanguage::Java),
+        Some("rb" | "rake" | "gemspec") => Some(HighlightLanguage::Ruby),
+        Some("cs") => Some(HighlightLanguage::CSharp),
+        Some("ex" | "exs") => Some(HighlightLanguage::Elixir),
+        Some("zig") => Some(HighlightLanguage::Zig),
         _ => None,
     }
 }
@@ -152,6 +363,19 @@ fn parse_language(language: HighlightLanguage, source: &str) -> Option<tree_sitt
         HighlightLanguage::TypeScript => tree_sitter_typescript::LANGUAGE_TSX.into(),
         HighlightLanguage::Python => tree_sitter_python::LANGUAGE.into(),
         HighlightLanguage::Lua => tree_sitter_lua::LANGUAGE.into(),
+        HighlightLanguage::Go => tree_sitter_go::LANGUAGE.into(),
+        HighlightLanguage::C => tree_sitter_c::LANGUAGE.into(),
+        HighlightLanguage::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+        HighlightLanguage::Bash => tree_sitter_bash::LANGUAGE.into(),
+        HighlightLanguage::Json => tree_sitter_json::LANGUAGE.into(),
+        HighlightLanguage::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+        HighlightLanguage::Html => tree_sitter_html::LANGUAGE.into(),
+        HighlightLanguage::Css => tree_sitter_css::LANGUAGE.into(),
+        HighlightLanguage::Java => tree_sitter_java::LANGUAGE.into(),
+        HighlightLanguage::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+        HighlightLanguage::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+        HighlightLanguage::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+        HighlightLanguage::Zig => tree_sitter_zig::LANGUAGE.into(),
     };
 
     if parser.set_language(&ts_language).is_err() {
@@ -167,6 +391,19 @@ fn syntax_query(language: HighlightLanguage) -> &'static Query {
         HighlightLanguage::TypeScript => ts_query(),
         HighlightLanguage::Python => python_query(),
         HighlightLanguage::Lua => lua_query(),
+        HighlightLanguage::Go => go_query(),
+        HighlightLanguage::C => c_query(),
+        HighlightLanguage::Cpp => cpp_query(),
+        HighlightLanguage::Bash => bash_query(),
+        HighlightLanguage::Json => json_query(),
+        HighlightLanguage::Toml => toml_query(),
+        HighlightLanguage::Html => html_query(),
+        HighlightLanguage::Css => css_query(),
+        HighlightLanguage::Java => java_query(),
+        HighlightLanguage::Ruby => ruby_query(),
+        HighlightLanguage::CSharp => csharp_query(),
+        HighlightLanguage::Elixir => elixir_query(),
+        HighlightLanguage::Zig => zig_query(),
     }
 }
 
@@ -371,5 +608,48 @@ mod tests {
             !string_spans.is_empty(),
             "Expected string literal highlight"
         );
+    }
+
+    #[test]
+    fn test_all_language_queries_compile() {
+        let test_cases: Vec<(&str, &str)> = vec![
+            ("test.rs", "fn main() {}"),
+            ("test.js", "function foo() {}"),
+            ("test.ts", "function foo(): void {}"),
+            ("test.py", "def foo(): pass"),
+            ("test.lua", "function foo() end"),
+            ("test.go", "func main() {}"),
+            ("test.c", "int main() { return 0; }"),
+            ("test.cpp", "int main() { return 0; }"),
+            ("test.sh", "#!/bin/bash\necho hello"),
+            ("test.json", r#"{"key": "value"}"#),
+            ("test.toml", r#"[section]\nkey = "value""#),
+            ("test.html", "<html><body></body></html>"),
+            ("test.css", "body { color: red; }"),
+            ("test.java", "class Main { void foo() {} }"),
+            ("test.rb", "def foo; end"),
+            ("test.cs", "class Main { void Foo() {} }"),
+            ("test.ex", "defmodule Foo do end"),
+            ("test.zig", "fn main() void {}"),
+        ];
+
+        let mut failures = Vec::new();
+        for (filename, source) in test_cases {
+            let result = std::panic::catch_unwind(|| {
+                let path = Path::new(filename);
+                highlight_file(path, source)
+            });
+            match result {
+                Ok(highlights) => assert!(!highlights.is_empty()),
+                Err(e) => {
+                    let msg = e.downcast_ref::<String>()
+                        .map(|s| s.as_str())
+                        .or_else(|| e.downcast_ref::<&str>().copied())
+                        .unwrap_or("unknown panic");
+                    failures.push(format!("{}: {}", filename, msg));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "Query compilation failures:\n{}", failures.join("\n"));
     }
 }

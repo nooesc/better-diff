@@ -67,7 +67,22 @@ Syntax highlighting is automatic based on file extension:
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
 | TypeScript | `.ts`, `.tsx`, `.mts`, `.cts` |
 | Python | `.py`, `.pyi` |
+| Go | `.go` |
+| C | `.c`, `.h` |
+| C++ | `.cc`, `.cpp`, `.cxx`, `.hpp`, `.hxx`, `.hh` |
+| Java | `.java` |
+| C# | `.cs` |
+| Ruby | `.rb`, `.rake`, `.gemspec` |
+| Bash/Shell | `.sh`, `.bash`, `.zsh` |
 | Lua | `.lua` |
+| Zig | `.zig` |
+| Elixir | `.ex`, `.exs` |
+| JSON | `.json`, `.jsonc` |
+| TOML | `.toml` |
+| HTML | `.html`, `.htm` |
+| CSS | `.css`, `.scss` |
+
+Also highlights `Dockerfile`, `Containerfile`, `Makefile`, and `GNUmakefile` by name.
 
 ## Built With
 
