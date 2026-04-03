@@ -12,12 +12,18 @@ A Rust TUI program for visualizing git diffs with novel visualization features.
 - **Block move detection** — detects moved code blocks with visual linking
 - **Heat map minimap** — change density sidebar
 - **Change animations** — subtle transitions on hunk focus
-- **Syntax highlighting** — tree-sitter powered for Rust, JavaScript/JSX, TypeScript/TSX, Python, and Lua
+- **Syntax highlighting** — tree-sitter powered for 18 languages
 - **Live mode** — auto-follows file changes across worktrees, scrolls to the first hunk (great for watching agents work)
+- **Search** — case-insensitive live search with match highlighting and navigation
 - **Theming** — dark, light, and monokai themes (config or `--theme` flag)
+- **Responsive layout** — side-by-side when wide, unified view when narrow (<120 cols)
+- **Stdin/pipe support** — read unified diffs from stdin (`git diff | better-diff`)
+- **Commit comparison** — compare branches, commits, or ranges (`--compare main..feature`)
 - **Two modes** — working tree vs HEAD, staged vs HEAD
 - **Filesystem watching** — near-real-time updates via `notify`
 - **Git worktree support** — switch between worktrees with `]`
+- **Shell completions** — `--completions` for bash, zsh, fish, etc.
+- **Config file** — persistent defaults via `~/.config/better-diff/config.toml`
 
 ## Install
 
@@ -49,6 +55,10 @@ better-diff --live
 
 # Use a different theme
 better-diff --theme monokai
+
+# Read diff from stdin
+git diff main..feature | better-diff
+cat changes.patch | better-diff
 
 # Generate shell completions
 better-diff --completions zsh > ~/.zsh/completions/_better-diff
