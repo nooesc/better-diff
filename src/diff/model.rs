@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiffMode {
     WorkingTree,
     Staged,
+    Commits { from_ref: String, to_ref: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

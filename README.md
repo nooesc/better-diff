@@ -33,11 +33,21 @@ better-diff
 # View staged changes
 better-diff --staged
 
+# Compare branches or commits
+better-diff --compare main..feature
+better-diff --compare HEAD~3..HEAD
+
+# View a single commit (compares with its parent)
+better-diff --compare HEAD~1
+
 # View changes in a specific directory
 better-diff /path/to/repo
 
 # Start in live mode (auto-follow file changes)
 better-diff --live
+
+# Generate shell completions
+better-diff --completions zsh > ~/.zsh/completions/_better-diff
 ```
 
 ## Keybindings

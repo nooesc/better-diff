@@ -95,9 +95,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // --- Mode indicator ---
-    let mode_label = match ctx.mode {
-        DiffMode::WorkingTree => " [Working Tree]",
-        DiffMode::Staged => " [Staged]",
+    let mode_label = match &ctx.mode {
+        DiffMode::WorkingTree => " [Working Tree]".to_string(),
+        DiffMode::Staged => " [Staged]".to_string(),
+        DiffMode::Commits { from_ref, to_ref } => format!(" [{}..{}]", from_ref, to_ref),
     };
     let branch_label = if worktree_count > 1 {
         let wt_path = substitute_home(&ctx.repo_path);

@@ -28,6 +28,9 @@ struct Cli {
 
     #[arg(long, value_enum, help = "Generate shell completions")]
     completions: Option<clap_complete::Shell>,
+
+    #[arg(long, help = "Compare two refs (e.g., main..feature, HEAD~3..HEAD)")]
+    compare: Option<String>,
 }
 
 struct TerminalGuard {
@@ -92,8 +95,12 @@ fn main() -> Result<()> {
         .position(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == repo_path)
         .unwrap_or(0);
 
-    // --staged only applies to the initially active worktree
-    if cli.staged {
+    // Apply CLI mode to the initially active worktree
+    if let Some(compare) = cli.compare {
+        let (from_ref, to_ref) = parse_ref_range(&compare);
+        contexts[active_worktree].mode = DiffMode::Commits { from_ref, to_ref };
+        contexts[active_worktree].recompute(&provider)?;
+    } else if cli.staged {
         contexts[active_worktree].mode = DiffMode::Staged;
         contexts[active_worktree].recompute(&provider)?;
     }
@@ -399,4 +406,15 @@ fn clamp_active(ctx: &mut WorktreeContext, visible_rows: usize) {
 
 fn content_visible_rows(terminal_height: u16) -> usize {
     terminal_height.saturating_sub(5) as usize
+}
+
+/// Parse a ref range like "main..feature" or a single ref like "HEAD~3".
+/// A single ref is treated as "ref^..ref" (compare with its parent).
+fn parse_ref_range(spec: &str) -> (String, String) {
+    if let Some((from, to)) = spec.split_once("..") {
+        (from.to_string(), to.to_string())
+    } else {
+        // Single ref: compare with its parent
+        (format!("{}^", spec), spec.to_string())
+    }
 }

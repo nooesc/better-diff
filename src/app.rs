@@ -149,7 +149,7 @@ impl WorktreeContext {
             }
         }
 
-        self.files = provider.compute_diff(&self.repo_path, self.mode)?;
+        self.files = provider.compute_diff(&self.repo_path, &self.mode)?;
         self.render_cache.invalidate();
 
         if let Ok(repo) = Repository::discover(&self.repo_path) {

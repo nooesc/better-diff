@@ -42,27 +42,36 @@ struct RawLine {
 }
 
 impl DiffProvider for Git2Provider {
-    fn compute_diff(&self, repo_path: &Path, mode: DiffMode) -> Result<Vec<FileDiff>> {
+    fn compute_diff(&self, repo_path: &Path, mode: &DiffMode) -> Result<Vec<FileDiff>> {
         let repo =
             Repository::discover(repo_path).context("Failed to discover git repository")?;
 
         let mut opts = DiffOptions::new();
         opts.context_lines(3);
 
-        let head_tree = repo
-            .head()
-            .ok()
-            .and_then(|head| head.peel_to_tree().ok());
-
         let diff = match mode {
             DiffMode::WorkingTree => {
+                let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
                 repo.diff_tree_to_workdir_with_index(head_tree.as_ref(), Some(&mut opts))
                     .context("Failed to compute working tree diff")?
             }
             DiffMode::Staged => {
+                let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
                 let index = repo.index().context("Failed to read index")?;
                 repo.diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))
                     .context("Failed to compute staged diff")?
+            }
+            DiffMode::Commits { from_ref, to_ref } => {
+                let from_obj = repo.revparse_single(from_ref)
+                    .with_context(|| format!("Failed to resolve ref '{}'", from_ref))?;
+                let to_obj = repo.revparse_single(to_ref)
+                    .with_context(|| format!("Failed to resolve ref '{}'", to_ref))?;
+                let from_tree = from_obj.peel_to_tree()
+                    .with_context(|| format!("Failed to peel '{}' to tree", from_ref))?;
+                let to_tree = to_obj.peel_to_tree()
+                    .with_context(|| format!("Failed to peel '{}' to tree", to_ref))?;
+                repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
+                    .context("Failed to compute commit diff")?
             }
         };
 
@@ -212,19 +221,29 @@ impl DiffProvider for Git2Provider {
             let old_content = if raw_file.status == FileStatus::Added {
                 String::new()
             } else {
-                raw_file
-                    .old_path
-                    .as_ref()
-                    .and_then(|p| load_old_content(&repo, p).ok())
-                    .unwrap_or_default()
+                let old_path = raw_file.old_path.as_deref().unwrap_or(&raw_file.path);
+                match mode {
+                    DiffMode::Commits { from_ref, .. } => {
+                        load_content_from_ref(&repo, old_path, from_ref).unwrap_or_default()
+                    }
+                    _ => load_old_content(&repo, old_path).unwrap_or_default(),
+                }
             };
 
             let new_content = if raw_file.status == FileStatus::Deleted {
                 String::new()
-            } else if mode == DiffMode::Staged {
-                load_staged_content(&repo, &raw_file.path).unwrap_or_default()
             } else {
-                load_new_content(&repo, &raw_file.path).unwrap_or_default()
+                match mode {
+                    DiffMode::Commits { to_ref, .. } => {
+                        load_content_from_ref(&repo, &raw_file.path, to_ref).unwrap_or_default()
+                    }
+                    DiffMode::Staged => {
+                        load_staged_content(&repo, &raw_file.path).unwrap_or_default()
+                    }
+                    DiffMode::WorkingTree => {
+                        load_new_content(&repo, &raw_file.path).unwrap_or_default()
+                    }
+                }
             };
 
             file_diffs.push(FileDiff {
@@ -265,6 +284,19 @@ impl DiffProvider for Git2Provider {
 
         Ok(file_diffs)
     }
+}
+
+/// Load a file's content from a specific git ref (commit SHA, branch name, tag, etc.).
+fn load_content_from_ref(repo: &Repository, path: &Path, ref_name: &str) -> Result<String> {
+    let obj = repo.revparse_single(ref_name)
+        .with_context(|| format!("Failed to resolve ref '{}'", ref_name))?;
+    let tree = obj.peel_to_tree()
+        .with_context(|| format!("Failed to peel '{}' to tree", ref_name))?;
+    let entry = tree.get_path(path)
+        .with_context(|| format!("File '{}' not found in '{}'", path.display(), ref_name))?;
+    let blob = repo.find_blob(entry.id())
+        .context("Failed to find blob")?;
+    Ok(String::from_utf8_lossy(blob.content()).to_string())
 }
 
 /// Load the old (HEAD) version of a file from the repository.
@@ -422,7 +454,7 @@ mod tests {
         let provider = Git2Provider::new();
 
         let diffs = provider
-            .compute_diff(&repo_path, DiffMode::WorkingTree)
+            .compute_diff(&repo_path, &DiffMode::WorkingTree)
             .expect("Failed to compute diff");
 
         assert!(diffs.is_empty(), "Expected no diffs for clean repo");
@@ -438,7 +470,7 @@ mod tests {
         fs::write(&file_path, "hello world\ngoodbye world\n").expect("Failed to write file");
 
         let diffs = provider
-            .compute_diff(&repo_path, DiffMode::WorkingTree)
+            .compute_diff(&repo_path, &DiffMode::WorkingTree)
             .expect("Failed to compute diff");
 
         assert_eq!(diffs.len(), 1, "Expected exactly one file diff");
@@ -471,7 +503,7 @@ mod tests {
         index.write().expect("Failed to write index");
 
         let diffs = provider
-            .compute_diff(&repo_path, DiffMode::Staged)
+            .compute_diff(&repo_path, &DiffMode::Staged)
             .expect("Failed to compute diff");
 
         assert_eq!(diffs.len(), 1, "Expected exactly one staged file diff");
@@ -501,7 +533,7 @@ mod tests {
         index.write().expect("Failed to write index");
 
         let diffs = provider
-            .compute_diff(&repo_path, DiffMode::WorkingTree)
+            .compute_diff(&repo_path, &DiffMode::WorkingTree)
             .expect("Failed to compute diff");
 
         let new_file_diff = diffs
@@ -524,7 +556,7 @@ mod tests {
         fs::write(&file_path, "hello world\nextra line\n").expect("Failed to write file");
 
         let diffs = provider
-            .compute_diff(&repo_path, DiffMode::WorkingTree)
+            .compute_diff(&repo_path, &DiffMode::WorkingTree)
             .expect("Failed to compute diff");
 
         assert_eq!(diffs.len(), 1);

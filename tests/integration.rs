@@ -87,7 +87,7 @@ fn test_full_diff_pipeline() {
     let dir = setup_repo_with_changes();
     let provider = Git2Provider::new();
     let files = provider
-        .compute_diff(dir.path(), DiffMode::WorkingTree)
+        .compute_diff(dir.path(), &DiffMode::WorkingTree)
         .unwrap();
 
     assert_eq!(files.len(), 1);
