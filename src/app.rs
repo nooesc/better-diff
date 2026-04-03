@@ -146,9 +146,9 @@ impl WorktreeContext {
     /// Find the index of the first file whose path or old_path matches any of the given paths.
     pub fn find_file_by_paths(&self, paths: &[PathBuf]) -> Option<usize> {
         self.files.iter().position(|f| {
-            paths.iter().any(|path| {
-                f.path == *path || f.old_path.as_deref() == Some(path.as_path())
-            })
+            paths
+                .iter()
+                .any(|path| f.path == *path || f.old_path.as_deref() == Some(path.as_path()))
         })
     }
 
@@ -158,10 +158,10 @@ impl WorktreeContext {
         if let Some(prev_path) = self.active_file().map(|f| f.path.clone()) {
             prev_paths.push(prev_path);
         }
-        if let Some(prev_old_path) = self.active_file().and_then(|f| f.old_path.clone()) {
-            if !prev_paths.contains(&prev_old_path) {
-                prev_paths.push(prev_old_path);
-            }
+        if let Some(prev_old_path) = self.active_file().and_then(|f| f.old_path.clone())
+            && !prev_paths.contains(&prev_old_path)
+        {
+            prev_paths.push(prev_old_path);
         }
 
         self.files = provider.compute_diff(&self.repo_path, &self.mode)?;
@@ -449,15 +449,8 @@ mod tests {
         let sig = Signature::now("better-diff", "test@example.com").expect("signature");
         let _ = {
             let tree = repo.find_tree(tree_id).expect("load tree");
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "initial commit",
-                &tree,
-                &[],
-            )
-            .expect("create initial commit")
+            repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[])
+                .expect("create initial commit")
         };
 
         (tmp_dir, repo)
@@ -625,18 +618,20 @@ mod tests {
         ctx.files = make_test_files(1);
 
         ctx.render_cache.cached_file_index = Some(0);
-        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
+        ctx.render_cache
+            .ensure_layout(0, &ctx.files[0], ctx.collapse_level);
         let first_builds = ctx.render_cache.layout_rebuild_count;
 
-        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
+        ctx.render_cache
+            .ensure_layout(0, &ctx.files[0], ctx.collapse_level);
         assert_eq!(
-            ctx.render_cache.layout_rebuild_count,
-            first_builds,
+            ctx.render_cache.layout_rebuild_count, first_builds,
             "layout should be reused when file and collapse level are unchanged"
         );
 
         ctx.cycle_collapse();
-        ctx.render_cache.ensure_layout(0, &ctx.files[0], ctx.collapse_level);
+        ctx.render_cache
+            .ensure_layout(0, &ctx.files[0], ctx.collapse_level);
         assert_eq!(
             ctx.render_cache.layout_rebuild_count,
             first_builds + 1,

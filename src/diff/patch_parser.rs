@@ -21,7 +21,10 @@ pub fn parse_patch(input: &str) -> Vec<FileDiff> {
                 files.push(fd);
             }
             i = next;
-        } else if lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ ") {
+        } else if lines[i].starts_with("--- ")
+            && i + 1 < lines.len()
+            && lines[i + 1].starts_with("+++ ")
+        {
             // Plain unified diff (no "diff --git" header)
             let (file_diff, next) = parse_plain_diff_entry(&lines, i);
             if let Some(fd) = file_diff {
@@ -138,9 +141,15 @@ fn parse_plain_diff_entry(lines: &[&str], start: usize) -> (Option<FileDiff>, us
         .or(old_file.clone())
         .unwrap_or_else(|| PathBuf::from("unknown"));
 
-    let status = if old_file.as_ref().map_or(false, |p| p.to_str() == Some("/dev/null")) {
+    let status = if old_file
+        .as_ref()
+        .is_some_and(|p| p.to_str() == Some("/dev/null"))
+    {
         FileStatus::Added
-    } else if new_file.as_ref().map_or(false, |p| p.to_str() == Some("/dev/null")) {
+    } else if new_file
+        .as_ref()
+        .is_some_and(|p| p.to_str() == Some("/dev/null"))
+    {
         FileStatus::Deleted
     } else {
         FileStatus::Modified
@@ -203,7 +212,9 @@ fn parse_hunks(lines: &[&str], start: usize) -> (Vec<Hunk>, usize) {
             hunks.push(hunk);
             i = next;
         } else if lines[i].starts_with("diff --git ")
-            || (lines[i].starts_with("--- ") && i + 1 < lines.len() && lines[i + 1].starts_with("+++ "))
+            || (lines[i].starts_with("--- ")
+                && i + 1 < lines.len()
+                && lines[i + 1].starts_with("+++ "))
         {
             break;
         } else {
@@ -292,13 +303,7 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
     // Strip leading "@@ " and trailing " @@..."
     let inner = header
         .strip_prefix("@@ ")
-        .and_then(|s| {
-            if let Some(end) = s.find(" @@") {
-                Some(&s[..end])
-            } else {
-                None
-            }
-        })
+        .and_then(|s| s.find(" @@").map(|end| &s[..end]))
         .unwrap_or("");
 
     let parts: Vec<&str> = inner.split_whitespace().collect();
@@ -319,10 +324,7 @@ fn parse_hunk_header(header: &str) -> (usize, usize, usize, usize) {
 /// Parse "start,count" or "start" into (start, count).
 fn parse_range(s: &str) -> (usize, usize) {
     if let Some((start, count)) = s.split_once(',') {
-        (
-            start.parse().unwrap_or(1),
-            count.parse().unwrap_or(0),
-        )
+        (start.parse().unwrap_or(1), count.parse().unwrap_or(0))
     } else {
         (s.parse().unwrap_or(1), 1)
     }
@@ -428,7 +430,10 @@ mod tests {
     #[test]
     fn test_parse_hunk_header() {
         assert_eq!(parse_hunk_header("@@ -1,3 +1,4 @@"), (1, 3, 1, 4));
-        assert_eq!(parse_hunk_header("@@ -10,0 +11,2 @@ fn main()"), (10, 0, 11, 2));
+        assert_eq!(
+            parse_hunk_header("@@ -10,0 +11,2 @@ fn main()"),
+            (10, 0, 11, 2)
+        );
         assert_eq!(parse_hunk_header("@@ -1 +1 @@"), (1, 1, 1, 1));
     }
 
@@ -451,7 +456,12 @@ index abc1234..def5678 100644
         assert_eq!(files[0].status, FileStatus::Modified);
         assert_eq!(files[0].hunks.len(), 1);
         // Should have been converted to Modified pair
-        assert!(files[0].hunks[0].lines.iter().any(|l| l.kind == LineKind::Modified));
+        assert!(
+            files[0].hunks[0]
+                .lines
+                .iter()
+                .any(|l| l.kind == LineKind::Modified)
+        );
     }
 
     #[test]

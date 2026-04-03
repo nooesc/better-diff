@@ -9,13 +9,13 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use super::minimap::Minimap;
 use crate::diff::model::{
     ChangeKind, CollapseLevel, DiffLine, FileDiff, FileStatus, FoldRegion, LineKind, MoveMatch,
 };
 use crate::syntax::HighlightSpan;
 use crate::theme;
 use crate::ui::animation::AnimationState;
-use super::minimap::Minimap;
 
 const HIDDEN_LABEL_PREFIX: &str = "┈┈┈┈ ";
 const HIDDEN_LABEL_SUFFIX: &str = " ┈┈┈┈";
@@ -118,9 +118,27 @@ pub fn render_split_pane(
     current_search_match: usize,
 ) {
     if area.width < SPLIT_MIN_WIDTH {
-        render_unified(frame, area, file, scroll_offset, animation, layout, search_matches, current_search_match);
+        render_unified(
+            frame,
+            area,
+            file,
+            scroll_offset,
+            animation,
+            layout,
+            search_matches,
+            current_search_match,
+        );
     } else {
-        render_side_by_side(frame, area, file, scroll_offset, animation, layout, search_matches, current_search_match);
+        render_side_by_side(
+            frame,
+            area,
+            file,
+            scroll_offset,
+            animation,
+            layout,
+            search_matches,
+            current_search_match,
+        );
     }
 }
 
@@ -164,21 +182,32 @@ fn render_side_by_side(
         .collect();
 
     // Apply hunk flash animation if active
-    apply_flash_animation(animation, hunk_start_offsets, total_lines, scroll_offset, visible_height, &mut old_visible, &mut new_visible);
+    apply_flash_animation(
+        animation,
+        hunk_start_offsets,
+        total_lines,
+        scroll_offset,
+        visible_height,
+        &mut old_visible,
+        &mut new_visible,
+    );
 
     // Apply search match highlighting
-    apply_search_highlights(search_matches, current_search_match, scroll_offset, visible_height, &mut old_visible, &mut new_visible);
+    apply_search_highlights(
+        search_matches,
+        current_search_match,
+        scroll_offset,
+        visible_height,
+        &mut old_visible,
+        &mut new_visible,
+    );
 
     let file_path = file.path.to_string_lossy().to_string();
 
     let (old_title, new_title) = file_version_titles(file, &file_path);
 
-    let left_block = Block::default()
-        .borders(Borders::ALL)
-        .title(old_title);
-    let right_block = Block::default()
-        .borders(Borders::ALL)
-        .title(new_title);
+    let left_block = Block::default().borders(Borders::ALL).title(old_title);
+    let right_block = Block::default().borders(Borders::ALL).title(new_title);
 
     let left_paragraph = Paragraph::new(old_visible).block(left_block);
     let right_paragraph = Paragraph::new(new_visible).block(right_block);
@@ -209,11 +238,8 @@ fn render_unified(
     search_matches: &[crate::app::SearchMatch],
     current_search_match: usize,
 ) {
-    let [content_area, minimap_area] = Layout::horizontal([
-        Constraint::Fill(1),
-        Constraint::Length(2),
-    ])
-    .areas(area);
+    let [content_area, minimap_area] =
+        Layout::horizontal([Constraint::Fill(1), Constraint::Length(2)]).areas(area);
 
     let rendered_lines = &layout.lines;
     let hunk_start_offsets = &layout.hunk_start_offsets;
@@ -252,11 +278,8 @@ fn render_unified(
     if let Some(anim) = animation {
         let flash_intensity = ((1.0 - anim.progress()) * 40.0) as u8;
         if flash_intensity > 0 {
-            let (hunk_start, hunk_end) = find_current_hunk_range(
-                hunk_start_offsets,
-                total_lines,
-                scroll_offset,
-            );
+            let (hunk_start, hunk_end) =
+                find_current_hunk_range(hunk_start_offsets, total_lines, scroll_offset);
             let vis_start = hunk_start.saturating_sub(scroll_offset);
             let vis_end = hunk_end.saturating_sub(scroll_offset).min(visible_height);
             for i in vis_start..vis_end {
@@ -275,9 +298,13 @@ fn render_unified(
         }
         let is_current = match_idx == current_search_match;
         let highlight_style = if is_current {
-            Style::default().bg(theme::current().ui_search_current_bg).fg(theme::current().ui_search_current_fg)
+            Style::default()
+                .bg(theme::current().ui_search_current_bg)
+                .fg(theme::current().ui_search_current_fg)
         } else {
-            Style::default().bg(theme::current().ui_search_other_bg).fg(theme::current().ui_search_other_fg)
+            Style::default()
+                .bg(theme::current().ui_search_other_bg)
+                .fg(theme::current().ui_search_other_fg)
         };
         visible[vis_idx] = apply_search_highlight(
             visible[vis_idx].clone(),
@@ -288,9 +315,7 @@ fn render_unified(
     }
 
     let file_path = file.path.to_string_lossy().to_string();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(file_path);
+    let block = Block::default().borders(Borders::ALL).title(file_path);
 
     let paragraph = Paragraph::new(visible).block(block);
     frame.render_widget(paragraph, content_area);
@@ -319,11 +344,8 @@ fn apply_flash_animation(
     if let Some(anim) = animation {
         let flash_intensity = ((1.0 - anim.progress()) * 40.0) as u8;
         if flash_intensity > 0 {
-            let (hunk_start, hunk_end) = find_current_hunk_range(
-                hunk_start_offsets,
-                total_lines,
-                scroll_offset,
-            );
+            let (hunk_start, hunk_end) =
+                find_current_hunk_range(hunk_start_offsets, total_lines, scroll_offset);
             let vis_start = hunk_start.saturating_sub(scroll_offset);
             let vis_end = hunk_end.saturating_sub(scroll_offset).min(visible_height);
 
@@ -345,8 +367,8 @@ fn apply_search_highlights(
     current_search_match: usize,
     scroll_offset: usize,
     visible_height: usize,
-    old_visible: &mut Vec<Line<'static>>,
-    new_visible: &mut Vec<Line<'static>>,
+    old_visible: &mut [Line<'static>],
+    new_visible: &mut [Line<'static>],
 ) {
     for (match_idx, m) in search_matches.iter().enumerate() {
         let vis_idx = m.line_index.saturating_sub(scroll_offset);
@@ -355,9 +377,13 @@ fn apply_search_highlights(
         }
         let is_current = match_idx == current_search_match;
         let highlight_style = if is_current {
-            Style::default().bg(theme::current().ui_search_current_bg).fg(theme::current().ui_search_current_fg)
+            Style::default()
+                .bg(theme::current().ui_search_current_bg)
+                .fg(theme::current().ui_search_current_fg)
         } else {
-            Style::default().bg(theme::current().ui_search_other_bg).fg(theme::current().ui_search_other_fg)
+            Style::default()
+                .bg(theme::current().ui_search_other_bg)
+                .fg(theme::current().ui_search_other_fg)
         };
         if m.is_new_side {
             if vis_idx < new_visible.len() {
@@ -380,11 +406,11 @@ fn apply_search_highlights(
 }
 
 fn file_version_titles(file: &FileDiff, file_path: &str) -> (String, String) {
-    if file.status == FileStatus::Renamed {
-        if let Some(old_path) = &file.old_path {
-            let old = old_path.to_string_lossy().to_string();
-            return (format!("old: {old}"), format!("new: {file_path}"));
-        }
+    if file.status == FileStatus::Renamed
+        && let Some(old_path) = &file.old_path
+    {
+        let old = old_path.to_string_lossy().to_string();
+        return (format!("old: {old}"), format!("new: {file_path}"));
     }
 
     (format!("old: {file_path}"), format!("new: {file_path}"))
@@ -394,10 +420,7 @@ fn file_version_titles(file: &FileDiff, file_path: &str) -> (String, String) {
 ///
 /// Returns `(old_lines, new_lines, hunk_start_offsets)` where `hunk_start_offsets[i]` is
 /// the index into the output lines where hunk `i` begins (at its `@@` header line).
-pub fn rendered_file_layout(
-    file: &FileDiff,
-    collapse_level: CollapseLevel,
-) -> (usize, Vec<usize>) {
+pub fn rendered_file_layout(file: &FileDiff, collapse_level: CollapseLevel) -> (usize, Vec<usize>) {
     let layout = build_rendered_file_layout(file, &[], &[], collapse_level);
     (layout.total_lines(), layout.hunk_start_offsets)
 }
@@ -425,7 +448,9 @@ fn build_side_by_side_rendered_lines(
     let mut rendered_lines: Vec<RenderedLinePair> = Vec::new();
     let mut hunk_start_offsets: Vec<usize> = Vec::new();
 
-    let fold_style = Style::new().fg(theme::current().ui_fold).add_modifier(Modifier::ITALIC);
+    let fold_style = Style::new()
+        .fg(theme::current().ui_fold)
+        .add_modifier(Modifier::ITALIC);
 
     // Build move-detection lookup maps.
     let mut move_source_starts: HashMap<usize, &MoveMatch> = HashMap::new();
@@ -499,11 +524,7 @@ fn build_side_by_side_rendered_lines(
         if collapse_level == CollapseLevel::Scoped {
             // In Scoped mode, collapse runs of context lines that fall entirely
             // within a fold region (and are not within 3 lines of a changed line).
-            let collapsed = collapse_context_in_hunk(
-                &hunk_lines,
-                &file.fold_regions,
-                fold_style,
-            );
+            let collapsed = collapse_context_in_hunk(&hunk_lines, &file.fold_regions, fold_style);
             for pair in collapsed {
                 rendered_lines.push(pair);
             }
@@ -564,9 +585,10 @@ fn build_hunk_lines(
                 let line_no = format_line_no(line.old_line_no);
                 let text = line.old_str();
 
-                let mut old_spans = vec![
-                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
-                ];
+                let mut old_spans = vec![Span::styled(
+                    line_no,
+                    Style::default().fg(theme::current().ui_line_number),
+                )];
                 old_spans.extend(apply_syntax_highlights(
                     text,
                     line.old_line_no,
@@ -575,9 +597,10 @@ fn build_hunk_lines(
                 let old_line = Line::from(old_spans);
 
                 let new_line_no = format_line_no(line.new_line_no);
-                let mut new_spans = vec![
-                    Span::styled(new_line_no, Style::default().fg(theme::current().ui_line_number)),
-                ];
+                let mut new_spans = vec![Span::styled(
+                    new_line_no,
+                    Style::default().fg(theme::current().ui_line_number),
+                )];
                 new_spans.extend(apply_syntax_highlights(
                     text,
                     line.new_line_no,
@@ -600,21 +623,19 @@ fn build_hunk_lines(
                 if let Some(n) = line.new_line_no
                     && let Some(m) = moves.dest_starts.get(&n)
                 {
-                    let label = move_label("from", &m.source_file, m.source_start, moves.current_file);
+                    let label =
+                        move_label("from", &m.source_file, m.source_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
-                    result.push(rendered_line(
-                        empty_line(),
-                        annotation,
-                        false,
-                        false,
-                        None,
-                    ));
+                    result.push(rendered_line(empty_line(), annotation, false, false, None));
                 }
 
                 let line_no = format_line_no(line.new_line_no);
                 let text = line.new_str();
                 let new_line = Line::from(vec![
-                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
+                    Span::styled(
+                        line_no,
+                        Style::default().fg(theme::current().ui_line_number),
+                    ),
                     Span::styled(
                         text.to_string(),
                         Style::default()
@@ -639,13 +660,7 @@ fn build_hunk_lines(
                         MOVE_BORDER_BOTTOM_WIDE.to_string(),
                         move_style,
                     ));
-                    result.push(rendered_line(
-                        empty_line(),
-                        closing,
-                        false,
-                        false,
-                        None,
-                    ));
+                    result.push(rendered_line(empty_line(), closing, false, false, None));
                 }
 
                 i += 1;
@@ -658,19 +673,16 @@ fn build_hunk_lines(
                 {
                     let label = move_label("to", &m.dest_file, m.dest_start, moves.current_file);
                     let annotation = Line::from(Span::styled(label, move_style));
-                    result.push(rendered_line(
-                        annotation,
-                        empty_line(),
-                        false,
-                        false,
-                        None,
-                    ));
+                    result.push(rendered_line(annotation, empty_line(), false, false, None));
                 }
 
                 let line_no = format_line_no(line.old_line_no);
                 let text = line.old_str();
                 let old_line = Line::from(vec![
-                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
+                    Span::styled(
+                        line_no,
+                        Style::default().fg(theme::current().ui_line_number),
+                    ),
                     Span::styled(
                         text.to_string(),
                         Style::default()
@@ -696,13 +708,7 @@ fn build_hunk_lines(
                         MOVE_BORDER_BOTTOM_NARROW.to_string(),
                         move_style,
                     ));
-                    result.push(rendered_line(
-                        closing,
-                        empty_line(),
-                        false,
-                        false,
-                        None,
-                    ));
+                    result.push(rendered_line(closing, empty_line(), false, false, None));
                 }
 
                 i += 1;
@@ -711,7 +717,10 @@ fn build_hunk_lines(
             LineKind::Modified => {
                 let has_tokens = !line.tokens.is_empty();
 
-                if has_tokens && i + 1 < hunk.lines.len() && hunk.lines[i + 1].kind == LineKind::Modified {
+                if has_tokens
+                    && i + 1 < hunk.lines.len()
+                    && hunk.lines[i + 1].kind == LineKind::Modified
+                {
                     let old_mod_line = &hunk.lines[i];
                     let new_mod_line = &hunk.lines[i + 1];
 
@@ -733,14 +742,20 @@ fn build_hunk_lines(
                     let new_text = line.new_str();
 
                     let old_line = Line::from(vec![
-                        Span::styled(old_line_no, Style::default().fg(theme::current().ui_line_number)),
+                        Span::styled(
+                            old_line_no,
+                            Style::default().fg(theme::current().ui_line_number),
+                        ),
                         Span::styled(
                             old_text.to_string(),
                             Style::default().fg(theme::current().diff_del_fg),
                         ),
                     ]);
                     let new_line = Line::from(vec![
-                        Span::styled(new_line_no, Style::default().fg(theme::current().ui_line_number)),
+                        Span::styled(
+                            new_line_no,
+                            Style::default().fg(theme::current().ui_line_number),
+                        ),
                         Span::styled(
                             new_text.to_string(),
                             Style::default().fg(theme::current().diff_add_fg),
@@ -778,7 +793,11 @@ fn move_label(direction: &str, file: &Path, line: usize, current_file: &Path) ->
 }
 
 /// Find the innermost fold region covering a 0-indexed line range.
-fn find_innermost_fold(fold_regions: &[FoldRegion], start_0: usize, end_0: usize) -> Option<&FoldRegion> {
+fn find_innermost_fold(
+    fold_regions: &[FoldRegion],
+    start_0: usize,
+    end_0: usize,
+) -> Option<&FoldRegion> {
     fold_regions
         .iter()
         .filter(|r| r.old_start <= start_0 && r.old_end >= end_0)
@@ -886,13 +905,7 @@ fn collapse_context_in_hunk(
 
             let marker_old = Line::from(Span::styled(label.clone(), fold_style));
             let marker_new = Line::from(Span::styled(label, fold_style));
-            result.push(rendered_line(
-                marker_old,
-                marker_new,
-                false,
-                false,
-                None,
-            ));
+            result.push(rendered_line(marker_old, marker_new, false, false, None));
         }
     }
 
@@ -999,10 +1012,7 @@ fn apply_search_highlight(
                 style,
             ));
             if hl_end < span_len {
-                result_spans.push(Span::styled(
-                    span.content[hl_end..].to_string(),
-                    span.style,
-                ));
+                result_spans.push(Span::styled(span.content[hl_end..].to_string(), span.style));
             }
         }
         pos = span_end;
@@ -1037,7 +1047,10 @@ fn build_token_line(line: &DiffLine, side: Side) -> Line<'static> {
     };
 
     let line_no_str = format_line_no(line_no);
-    let mut spans = vec![Span::styled(line_no_str, Style::default().fg(theme::current().ui_line_number))];
+    let mut spans = vec![Span::styled(
+        line_no_str,
+        Style::default().fg(theme::current().ui_line_number),
+    )];
 
     for token in &line.tokens {
         let style = if token.kind == ChangeKind::Equal {
@@ -1260,7 +1273,8 @@ mod tests {
     fn test_build_side_by_side_basic() {
         let file = make_test_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Should have: 1 hunk header + 1 context + 1 deleted + 1 added = 4 lines each
         assert_eq!(old.len(), 4, "Expected 4 old lines, got {}", old.len());
@@ -1271,7 +1285,8 @@ mod tests {
     fn test_build_side_by_side_modified_pair() {
         let file = make_modified_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Should have: 1 hunk header + 1 modified line = 2 lines each
         assert_eq!(old.len(), 2, "Expected 2 old lines, got {}", old.len());
@@ -1299,7 +1314,8 @@ mod tests {
             move_matches: vec![],
         };
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
         assert!(old.is_empty());
         assert!(new.is_empty());
     }
@@ -1371,13 +1387,24 @@ mod tests {
     fn test_tight_mode_shows_gap_marker_between_hunks() {
         let file = make_two_hunk_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Tight);
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Tight);
 
         // Gap between hunks: old_start(1) + old_lines(2) = 3, next hunk starts at 20
         // So gap = 20 - 3 = 17 lines hidden.
         // Expected lines: header1(1) + 2 lines + gap marker(1) + header2(1) + 2 lines = 7
-        assert_eq!(old.len(), 7, "Tight: expected 7 old lines, got {}", old.len());
-        assert_eq!(new.len(), 7, "Tight: expected 7 new lines, got {}", new.len());
+        assert_eq!(
+            old.len(),
+            7,
+            "Tight: expected 7 old lines, got {}",
+            old.len()
+        );
+        assert_eq!(
+            new.len(),
+            7,
+            "Tight: expected 7 new lines, got {}",
+            new.len()
+        );
 
         // The gap marker should be at index 3 (after header + 2 hunk lines)
         let gap_text = old[3].to_string();
@@ -1400,7 +1427,8 @@ mod tests {
         });
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, _new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
+        let (old, _new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
 
         // The gap marker should use the fold label
         let gap_text = old[3].to_string();
@@ -1415,12 +1443,18 @@ mod tests {
     fn test_expanded_mode_no_gap_markers() {
         let file = make_two_hunk_file();
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
+        let (old, new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // Expanded: no gap markers — just header + lines for each hunk
         // hunk1: header + 2 lines = 3, hunk2: header + 2 lines = 3, total = 6
         // No gap marker
-        assert_eq!(old.len(), 6, "Expanded: expected 6 old lines, got {}", old.len());
+        assert_eq!(
+            old.len(),
+            6,
+            "Expanded: expected 6 old lines, got {}",
+            old.len()
+        );
         assert_eq!(new.len(), 6);
 
         // Verify none of the lines contain "hidden"
@@ -1487,14 +1521,15 @@ mod tests {
             fold_regions: vec![FoldRegion {
                 kind: FoldKind::Function,
                 label: "fn big_function() (30 lines)".to_string(),
-                old_start: 5,  // 0-indexed, covers lines 6-35
+                old_start: 5, // 0-indexed, covers lines 6-35
                 old_end: 34,
-                }],
+            }],
             move_matches: vec![],
         };
 
         let no_hl: Vec<Vec<HighlightSpan>> = Vec::new();
-        let (old, _new, _offsets) = build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
+        let (old, _new, _offsets) =
+            build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Scoped);
 
         // In Expanded mode this would be: 1 header + 11 lines = 12
         let (old_expanded, _, _) =
@@ -1519,7 +1554,12 @@ mod tests {
         );
 
         // Should be exactly header(1) + fold_marker(1) + context(3) + change(1) + context(3) + fold_marker(1) = 10
-        assert_eq!(old.len(), 10, "Expected 10 lines in scoped mode, got {}", old.len());
+        assert_eq!(
+            old.len(),
+            10,
+            "Expected 10 lines in scoped mode, got {}",
+            old.len()
+        );
     }
 
     #[test]
@@ -1533,7 +1573,7 @@ mod tests {
         let regions = vec![FoldRegion {
             kind: FoldKind::Function,
             label: "fn foo() (20 lines)".to_string(),
-            old_start: 3,  // 0-indexed
+            old_start: 3, // 0-indexed
             old_end: 22,
         }];
         // gap_old_start=5 (1-indexed), gap_old_end=19 (1-indexed)
@@ -1684,8 +1724,18 @@ mod tests {
             build_side_by_side_lines(&file, &no_hl, &no_hl, CollapseLevel::Expanded);
 
         // header(1) + context(1) + deleted(1) + added(1) = 4
-        assert_eq!(old.len(), 4, "Expected 4 old lines without moves, got {}", old.len());
-        assert_eq!(new.len(), 4, "Expected 4 new lines without moves, got {}", new.len());
+        assert_eq!(
+            old.len(),
+            4,
+            "Expected 4 old lines without moves, got {}",
+            old.len()
+        );
+        assert_eq!(
+            new.len(),
+            4,
+            "Expected 4 new lines without moves, got {}",
+            new.len()
+        );
     }
 
     #[test]
@@ -1701,19 +1751,47 @@ mod tests {
         };
 
         // Cross-file labels
-        let to_label = move_label("to", &m.dest_file, m.dest_start, std::path::Path::new("a.rs"));
+        let to_label = move_label(
+            "to",
+            &m.dest_file,
+            m.dest_start,
+            std::path::Path::new("a.rs"),
+        );
         assert!(to_label.contains("moved to b.rs:30"), "Got: {}", to_label);
 
-        let from_label = move_label("from", &m.source_file, m.source_start, std::path::Path::new("b.rs"));
-        assert!(from_label.contains("moved from a.rs:10"), "Got: {}", from_label);
+        let from_label = move_label(
+            "from",
+            &m.source_file,
+            m.source_start,
+            std::path::Path::new("b.rs"),
+        );
+        assert!(
+            from_label.contains("moved from a.rs:10"),
+            "Got: {}",
+            from_label
+        );
 
         // Same-file labels
-        let to_same = move_label("to", &m.dest_file, m.dest_start, std::path::Path::new("b.rs"));
+        let to_same = move_label(
+            "to",
+            &m.dest_file,
+            m.dest_start,
+            std::path::Path::new("b.rs"),
+        );
         assert!(to_same.contains("moved to line 30"), "Got: {}", to_same);
 
         // When current_file matches source_file, from_label uses "line N"
-        let from_same = move_label("from", &m.source_file, m.source_start, std::path::Path::new("a.rs"));
-        assert!(from_same.contains("moved from line 10"), "Got: {}", from_same);
+        let from_same = move_label(
+            "from",
+            &m.source_file,
+            m.source_start,
+            std::path::Path::new("a.rs"),
+        );
+        assert!(
+            from_same.contains("moved from line 10"),
+            "Got: {}",
+            from_same
+        );
     }
 
     #[test]

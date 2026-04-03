@@ -124,8 +124,7 @@ impl Widget for Minimap {
         // Determine scroll indicator rows.
         let (indicator_start, indicator_end) = if total > 0 {
             let start_row = (self.scroll_offset * height) / total.max(1);
-            let end_row =
-                ((self.scroll_offset + self.visible_height) * height) / total.max(1);
+            let end_row = ((self.scroll_offset + self.visible_height) * height) / total.max(1);
             let end_row = end_row.min(height);
             (start_row, end_row)
         } else {

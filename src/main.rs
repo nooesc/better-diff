@@ -79,7 +79,9 @@ fn main() -> Result<()> {
     }
 
     let config = Config::load();
-    let theme_name = cli.theme.as_deref()
+    let theme_name = cli
+        .theme
+        .as_deref()
         .or(config.theme.as_deref())
         .unwrap_or("dark");
     better_diff::theme::init(theme_name);
@@ -141,8 +143,7 @@ fn main() -> Result<()> {
     }
 
     // Start watchers for all worktrees + .git/worktrees/
-    let (mut watcher_set, watch_rx) =
-        WatcherSet::new(manager.worktrees(), manager.common_dir())?;
+    let (mut watcher_set, watch_rx) = WatcherSet::new(manager.worktrees(), manager.common_dir())?;
 
     let mut app = App {
         contexts,
@@ -189,11 +190,15 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
             match event::read()? {
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollDown => {
-                        for _ in 0..3 { ctx.scroll_down(); }
+                        for _ in 0..3 {
+                            ctx.scroll_down();
+                        }
                         needs_clamp = true;
                     }
                     MouseEventKind::ScrollUp => {
-                        for _ in 0..3 { ctx.scroll_up(); }
+                        for _ in 0..3 {
+                            ctx.scroll_up();
+                        }
                         needs_clamp = true;
                     }
                     _ => {}
@@ -201,7 +206,9 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if search.input_active {
                         match key.code {
-                            KeyCode::Esc => { search.clear(); }
+                            KeyCode::Esc => {
+                                search.clear();
+                            }
                             KeyCode::Enter => {
                                 search.input_active = false;
                                 if let Some(line) = search.current_line() {
@@ -232,9 +239,18 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                                     return Ok(());
                                 }
                             }
-                            KeyCode::Char('j') | KeyCode::Down => { ctx.scroll_down(); needs_clamp = true; }
-                            KeyCode::Char('k') | KeyCode::Up => { ctx.scroll_up(); needs_clamp = true; }
-                            KeyCode::Char('g') | KeyCode::Home => { ctx.scroll_to_top(); needs_clamp = true; }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                ctx.scroll_down();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                ctx.scroll_up();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('g') | KeyCode::Home => {
+                                ctx.scroll_to_top();
+                                needs_clamp = true;
+                            }
                             KeyCode::Char('G') | KeyCode::End => {
                                 if ui::ensure_active_file_layout(&mut ctx) {
                                     let total = ctx.render_cache.layout.total_lines();
@@ -252,9 +268,18 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                                 ctx.scroll_page_up(step);
                                 needs_clamp = true;
                             }
-                            KeyCode::Tab => { ctx.next_file(); needs_clamp = true; }
-                            KeyCode::BackTab => { ctx.prev_file(); needs_clamp = true; }
-                            KeyCode::Char('c') => { ctx.cycle_collapse(); needs_clamp = true; }
+                            KeyCode::Tab => {
+                                ctx.next_file();
+                                needs_clamp = true;
+                            }
+                            KeyCode::BackTab => {
+                                ctx.prev_file();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('c') => {
+                                ctx.cycle_collapse();
+                                needs_clamp = true;
+                            }
                             KeyCode::Char('n') => {
                                 if search.has_results() {
                                     search.next_match();
@@ -303,11 +328,9 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                 _ => {}
             }
 
-            if needs_clamp {
-                if ui::ensure_active_file_layout(&mut ctx) {
-                    let total = ctx.render_cache.layout.total_lines();
-                    ctx.clamp_scroll_offset(total, visible_rows);
-                }
+            if needs_clamp && ui::ensure_active_file_layout(&mut ctx) {
+                let total = ctx.render_cache.layout.total_lines();
+                ctx.clamp_scroll_offset(total, visible_rows);
             }
         }
 
@@ -319,13 +342,21 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
         let match_count = search.matches.len();
 
         term.draw(|frame| {
-            render_stdin_view(frame, &mut ctx, &search_matches, current_match, search_active, &search_query, match_count);
+            render_stdin_view(
+                frame,
+                &mut ctx,
+                &search_matches,
+                current_match,
+                search_active,
+                &search_query,
+                match_count,
+            );
         })?;
 
-        if let Some(ref anim) = ctx.animation {
-            if anim.is_done() {
-                ctx.animation = None;
-            }
+        if let Some(ref anim) = ctx.animation
+            && anim.is_done()
+        {
+            ctx.animation = None;
         }
     }
 }
@@ -347,12 +378,12 @@ fn render_stdin_view(
     search_query: &str,
     match_count: usize,
 ) {
+    use better_diff::diff::model::FileDiff;
+    use better_diff::theme;
     use ratatui::layout::{Constraint, Layout};
     use ratatui::style::{Modifier, Style};
     use ratatui::text::{Line, Span};
     use ratatui::widgets::{Paragraph, Tabs};
-    use better_diff::theme;
-    use better_diff::diff::model::FileDiff;
     use std::collections::HashMap;
 
     let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
@@ -370,25 +401,35 @@ fn render_stdin_view(
         frame.render_widget(no_changes, tab_area);
     } else {
         let base_name_of = |f: &FileDiff| -> String {
-            f.path.file_name()
-                .map_or_else(|| f.path.to_string_lossy().to_string(), |n| n.to_string_lossy().to_string())
+            f.path.file_name().map_or_else(
+                || f.path.to_string_lossy().to_string(),
+                |n| n.to_string_lossy().to_string(),
+            )
         };
         let mut name_counts: HashMap<String, usize> = HashMap::new();
         for file in &ctx.files {
             *name_counts.entry(base_name_of(file)).or_insert(0) += 1;
         }
-        let titles: Vec<String> = ctx.files.iter().map(|f| {
-            let base = base_name_of(f);
-            if name_counts.get(&base).is_some_and(|c| *c > 1) {
-                f.path.to_string_lossy().to_string()
-            } else {
-                base
-            }
-        }).collect();
+        let titles: Vec<String> = ctx
+            .files
+            .iter()
+            .map(|f| {
+                let base = base_name_of(f);
+                if name_counts.get(&base).is_some_and(|c| *c > 1) {
+                    f.path.to_string_lossy().to_string()
+                } else {
+                    base
+                }
+            })
+            .collect();
         let tabs = Tabs::new(titles)
             .select(ctx.active_file)
             .style(Style::default().fg(theme::current().ui_tab_inactive))
-            .highlight_style(Style::default().fg(theme::current().ui_tab_active).add_modifier(Modifier::BOLD))
+            .highlight_style(
+                Style::default()
+                    .fg(theme::current().ui_tab_active)
+                    .add_modifier(Modifier::BOLD),
+            )
             .divider("│");
         frame.render_widget(tabs, tab_area);
     }
@@ -396,7 +437,10 @@ fn render_stdin_view(
     // Mode line
     let mode_line = Line::from(vec![
         Span::styled(" [stdin]", Style::default().fg(theme::current().ui_mode)),
-        Span::styled(format!("  {} file(s)", ctx.files.len()), Style::default().fg(theme::current().ui_dim)),
+        Span::styled(
+            format!("  {} file(s)", ctx.files.len()),
+            Style::default().fg(theme::current().ui_dim),
+        ),
     ]);
     frame.render_widget(Paragraph::new(mode_line), mode_area);
 
@@ -405,14 +449,19 @@ fn render_stdin_view(
         let layout = &ctx.render_cache.layout;
         let file = &ctx.files[ctx.active_file];
         better_diff::ui::split_pane::render_split_pane(
-            frame, content_area, file, ctx.scroll_offset, ctx.animation.as_ref(),
-            layout, search_matches, current_match,
+            frame,
+            content_area,
+            file,
+            ctx.scroll_offset,
+            ctx.animation.as_ref(),
+            layout,
+            search_matches,
+            current_match,
         );
     } else {
         use ratatui::widgets::{Block, Borders};
-        let content = Paragraph::new("No changes to display").block(
-            Block::default().borders(Borders::ALL).title("Diff View"),
-        );
+        let content = Paragraph::new("No changes to display")
+            .block(Block::default().borders(Borders::ALL).title("Diff View"));
         frame.render_widget(content, content_area);
     }
 
@@ -421,24 +470,42 @@ fn render_stdin_view(
     let dim = Style::default().fg(theme::current().ui_dim);
     let mut status_spans = vec![];
     if search_active {
-        status_spans.push(Span::styled(" /", Style::default().fg(theme::current().ui_mode)));
-        status_spans.push(Span::styled(search_query.to_string(), Style::default().fg(theme::current().ui_search_other_fg)));
-        status_spans.push(Span::styled("▎", Style::default().fg(theme::current().ui_mode)));
+        status_spans.push(Span::styled(
+            " /",
+            Style::default().fg(theme::current().ui_mode),
+        ));
+        status_spans.push(Span::styled(
+            search_query.to_string(),
+            Style::default().fg(theme::current().ui_search_other_fg),
+        ));
+        status_spans.push(Span::styled(
+            "▎",
+            Style::default().fg(theme::current().ui_mode),
+        ));
         if match_count > 0 {
-            status_spans.push(Span::styled(format!(" [{}/{}]", current_match + 1, match_count), key));
+            status_spans.push(Span::styled(
+                format!(" [{}/{}]", current_match + 1, match_count),
+                key,
+            ));
         }
     } else {
         if !search_query.is_empty() && match_count > 0 {
             status_spans.push(Span::styled(
-                format!(" /{} [{}/{}]", search_query, current_match + 1, match_count), key,
+                format!(" /{} [{}/{}]", search_query, current_match + 1, match_count),
+                key,
             ));
         }
         status_spans.extend([
-            Span::styled(" [q]", key), Span::styled("uit ", dim),
-            Span::styled("[Tab]", key), Span::styled(" next file ", dim),
-            Span::styled("[n/N]", key), Span::styled(" hunks/search ", dim),
-            Span::styled("[c]", key), Span::styled("ollapse ", dim),
-            Span::styled("[/]", key), Span::styled("search", dim),
+            Span::styled(" [q]", key),
+            Span::styled("uit ", dim),
+            Span::styled("[Tab]", key),
+            Span::styled(" next file ", dim),
+            Span::styled("[n/N]", key),
+            Span::styled(" hunks/search ", dim),
+            Span::styled("[c]", key),
+            Span::styled("ollapse ", dim),
+            Span::styled("[/]", key),
+            Span::styled("search", dim),
         ]);
     }
     let status_line = Line::from(status_spans);
@@ -498,22 +565,20 @@ fn run_event_loop(
         }
 
         // Live mode: navigate to the most recently changed file
-        if let Some((wt_idx, paths)) = live_target {
-            if wt_idx < app.contexts.len() {
-                app.active_worktree = wt_idx;
-                let ctx = &mut app.contexts[wt_idx];
+        if let Some((wt_idx, paths)) = live_target
+            && wt_idx < app.contexts.len()
+        {
+            app.active_worktree = wt_idx;
+            let ctx = &mut app.contexts[wt_idx];
 
-                if let Some(file_idx) = ctx.find_file_by_paths(&paths) {
-                    ctx.active_file = file_idx;
-                    ctx.scroll_offset = 0;
+            if let Some(file_idx) = ctx.find_file_by_paths(&paths) {
+                ctx.active_file = file_idx;
+                ctx.scroll_offset = 0;
 
-                    if ui::ensure_active_file_layout(ctx) {
-                        if let Some(&first_hunk) =
-                            ctx.render_cache.layout.hunk_starts().first()
-                        {
-                            ctx.scroll_offset = first_hunk;
-                        }
-                    }
+                if ui::ensure_active_file_layout(ctx)
+                    && let Some(&first_hunk) = ctx.render_cache.layout.hunk_starts().first()
+                {
+                    ctx.scroll_offset = first_hunk;
                 }
             }
         }
@@ -570,152 +635,154 @@ fn run_event_loop(
                             _ => {}
                         }
                     } else {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            if app.search.has_results() {
-                                app.search.clear();
-                            } else {
-                                app.should_quit = true;
-                            }
-                        }
-                        KeyCode::Char(']') => {
-                            app.next_worktree();
-                            needs_clamp = true;
-                        }
-                        KeyCode::Char('G') => {
-                            let ctx = app.active_context_mut();
-                            if ui::ensure_active_file_layout(ctx) {
-                                let total_lines = ctx.render_cache.layout.total_lines();
-                                ctx.scroll_to_bottom(total_lines, visible_rows);
-                                needs_clamp = true;
-                            }
-                        }
-                        KeyCode::Char('g') => {
-                            app.active_context_mut().scroll_to_top();
-                            needs_clamp = true;
-                        }
-                        KeyCode::Tab => {
-                            app.active_context_mut().next_file();
-                            needs_clamp = true;
-                        }
-                        KeyCode::BackTab => {
-                            app.active_context_mut().prev_file();
-                            needs_clamp = true;
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            app.active_context_mut().scroll_down();
-                            needs_clamp = true;
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            app.active_context_mut().scroll_up();
-                            needs_clamp = true;
-                        }
-                        KeyCode::PageDown => {
-                            let ctx = app.active_context_mut();
-                            if ctx.active_file().is_some() {
-                                let step = visible_rows.max(1).div_euclid(2).max(1);
-                                ctx.scroll_page_down(step);
-                                needs_clamp = true;
-                            }
-                        }
-                        KeyCode::PageUp => {
-                            let ctx = app.active_context_mut();
-                            if ctx.active_file().is_some() {
-                                let step = visible_rows.max(1).div_euclid(2).max(1);
-                                ctx.scroll_page_up(step);
-                                needs_clamp = true;
-                            }
-                        }
-                        KeyCode::Home => {
-                            app.active_context_mut().scroll_to_top();
-                            needs_clamp = true;
-                        }
-                        KeyCode::End => {
-                            let ctx = app.active_context_mut();
-                            if ui::ensure_active_file_layout(ctx) {
-                                let total_lines = ctx.render_cache.layout.total_lines();
-                                ctx.scroll_to_bottom(total_lines, visible_rows);
-                                needs_clamp = true;
-                            }
-                        }
-                        KeyCode::Char('n') => {
-                            if app.search.has_results() {
-                                app.search.next_match();
-                                if let Some(line) = app.search.current_line() {
-                                    app.active_context_mut().scroll_offset = line;
-                                    needs_clamp = true;
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                if app.search.has_results() {
+                                    app.search.clear();
+                                } else {
+                                    app.should_quit = true;
                                 }
-                            } else {
+                            }
+                            KeyCode::Char(']') => {
+                                app.next_worktree();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('G') => {
                                 let ctx = app.active_context_mut();
                                 if ui::ensure_active_file_layout(ctx) {
                                     let total_lines = ctx.render_cache.layout.total_lines();
-                                    let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
-                                    ctx.next_hunk_with_offsets(
-                                        &hunk_starts,
-                                        total_lines,
-                                        visible_rows,
-                                    );
-                                    ctx.animation = Some(AnimationState::new());
+                                    ctx.scroll_to_bottom(total_lines, visible_rows);
                                     needs_clamp = true;
                                 }
                             }
-                        }
-                        KeyCode::Char('N') => {
-                            if app.search.has_results() {
-                                app.search.prev_match();
-                                if let Some(line) = app.search.current_line() {
-                                    app.active_context_mut().scroll_offset = line;
+                            KeyCode::Char('g') => {
+                                app.active_context_mut().scroll_to_top();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Tab => {
+                                app.active_context_mut().next_file();
+                                needs_clamp = true;
+                            }
+                            KeyCode::BackTab => {
+                                app.active_context_mut().prev_file();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                app.active_context_mut().scroll_down();
+                                needs_clamp = true;
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                app.active_context_mut().scroll_up();
+                                needs_clamp = true;
+                            }
+                            KeyCode::PageDown => {
+                                let ctx = app.active_context_mut();
+                                if ctx.active_file().is_some() {
+                                    let step = visible_rows.max(1).div_euclid(2).max(1);
+                                    ctx.scroll_page_down(step);
                                     needs_clamp = true;
                                 }
-                            } else {
+                            }
+                            KeyCode::PageUp => {
+                                let ctx = app.active_context_mut();
+                                if ctx.active_file().is_some() {
+                                    let step = visible_rows.max(1).div_euclid(2).max(1);
+                                    ctx.scroll_page_up(step);
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Home => {
+                                app.active_context_mut().scroll_to_top();
+                                needs_clamp = true;
+                            }
+                            KeyCode::End => {
                                 let ctx = app.active_context_mut();
                                 if ui::ensure_active_file_layout(ctx) {
                                     let total_lines = ctx.render_cache.layout.total_lines();
-                                    let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
-                                    ctx.prev_hunk_with_offsets(
-                                        &hunk_starts,
-                                        total_lines,
-                                        visible_rows,
-                                    );
-                                    ctx.animation = Some(AnimationState::new());
+                                    ctx.scroll_to_bottom(total_lines, visible_rows);
                                     needs_clamp = true;
                                 }
                             }
-                        }
-                        KeyCode::Char('/') => {
-                            app.search.query.clear();
-                            app.search.matches.clear();
-                            app.search.current_match = 0;
-                            app.search.input_active = true;
-                        }
-                        KeyCode::Char('s') => {
-                            let ctx = app.active_context_mut();
-                            if ctx.set_mode(DiffMode::Staged) {
-                                ctx.recompute(provider)?;
+                            KeyCode::Char('n') => {
+                                if app.search.has_results() {
+                                    app.search.next_match();
+                                    if let Some(line) = app.search.current_line() {
+                                        app.active_context_mut().scroll_offset = line;
+                                        needs_clamp = true;
+                                    }
+                                } else {
+                                    let ctx = app.active_context_mut();
+                                    if ui::ensure_active_file_layout(ctx) {
+                                        let total_lines = ctx.render_cache.layout.total_lines();
+                                        let hunk_starts =
+                                            ctx.render_cache.layout.hunk_starts().to_vec();
+                                        ctx.next_hunk_with_offsets(
+                                            &hunk_starts,
+                                            total_lines,
+                                            visible_rows,
+                                        );
+                                        ctx.animation = Some(AnimationState::new());
+                                        needs_clamp = true;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('N') => {
+                                if app.search.has_results() {
+                                    app.search.prev_match();
+                                    if let Some(line) = app.search.current_line() {
+                                        app.active_context_mut().scroll_offset = line;
+                                        needs_clamp = true;
+                                    }
+                                } else {
+                                    let ctx = app.active_context_mut();
+                                    if ui::ensure_active_file_layout(ctx) {
+                                        let total_lines = ctx.render_cache.layout.total_lines();
+                                        let hunk_starts =
+                                            ctx.render_cache.layout.hunk_starts().to_vec();
+                                        ctx.prev_hunk_with_offsets(
+                                            &hunk_starts,
+                                            total_lines,
+                                            visible_rows,
+                                        );
+                                        ctx.animation = Some(AnimationState::new());
+                                        needs_clamp = true;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('/') => {
+                                app.search.query.clear();
+                                app.search.matches.clear();
+                                app.search.current_match = 0;
+                                app.search.input_active = true;
+                            }
+                            KeyCode::Char('s') => {
+                                let ctx = app.active_context_mut();
+                                if ctx.set_mode(DiffMode::Staged) {
+                                    ctx.recompute(provider)?;
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Char('w') => {
+                                let ctx = app.active_context_mut();
+                                if ctx.set_mode(DiffMode::WorkingTree) {
+                                    ctx.recompute(provider)?;
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Char('c') => {
+                                app.active_context_mut().cycle_collapse();
                                 needs_clamp = true;
                             }
-                        }
-                        KeyCode::Char('w') => {
-                            let ctx = app.active_context_mut();
-                            if ctx.set_mode(DiffMode::WorkingTree) {
-                                ctx.recompute(provider)?;
+                            KeyCode::Char('L') => {
+                                app.live_mode = !app.live_mode;
+                            }
+                            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                                let index = (c as usize) - ('1' as usize);
+                                app.active_context_mut().select_file(index);
                                 needs_clamp = true;
                             }
+                            _ => {}
                         }
-                        KeyCode::Char('c') => {
-                            app.active_context_mut().cycle_collapse();
-                            needs_clamp = true;
-                        }
-                        KeyCode::Char('L') => {
-                            app.live_mode = !app.live_mode;
-                        }
-                        KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                            let index = (c as usize) - ('1' as usize);
-                            app.active_context_mut().select_file(index);
-                            needs_clamp = true;
-                        }
-                        _ => {}
-                    }
                     } // end else (not search input mode)
 
                     if app.should_quit {

@@ -90,9 +90,9 @@ fn extract_blocks(files: &[FileDiff]) -> Vec<Block> {
                         current_lines.push(line);
                     } else {
                         // Flush the previous block if it meets the minimum size.
-                    if let Some(kind) = current_kind
-                        && current_lines.len() >= MIN_BLOCK_SIZE
-                    {
+                        if let Some(kind) = current_kind
+                            && current_lines.len() >= MIN_BLOCK_SIZE
+                        {
                             blocks.push(build_block(
                                 block_file_path(kind),
                                 block_logical_file_path(kind),
@@ -231,8 +231,18 @@ pub fn detect_moves(files: &mut [FileDiff]) {
 
     candidates.sort_by(|a, b| {
         b.0.total_cmp(&a.0)
-            .then_with(|| blocks[a.2].line_count.cmp(&blocks[b.2].line_count).reverse())
-            .then_with(|| blocks[a.3].line_count.cmp(&blocks[b.3].line_count).reverse())
+            .then_with(|| {
+                blocks[a.2]
+                    .line_count
+                    .cmp(&blocks[b.2].line_count)
+                    .reverse()
+            })
+            .then_with(|| {
+                blocks[a.3]
+                    .line_count
+                    .cmp(&blocks[b.3].line_count)
+                    .reverse()
+            })
             .then_with(|| blocks[a.2].file_path.cmp(&blocks[b.2].file_path))
             .then_with(|| blocks[a.2].start_line.cmp(&blocks[b.2].start_line))
             .then_with(|| blocks[a.3].file_path.cmp(&blocks[b.3].file_path))
@@ -247,17 +257,11 @@ pub fn detect_moves(files: &mut [FileDiff]) {
         let del = &blocks[del_idx];
         let add = &blocks[add_idx];
 
-        if used_source_lines
-            .iter()
-            .any(|(file_path, s, e)| {
-                file_path == &del.file_path && line_overlap(del.start_line, del.end_line, *s, *e)
-            })
-            || used_dest_lines
-                .iter()
-                .any(|(file_path, s, e)| {
-                    file_path == &add.file_path && line_overlap(add.start_line, add.end_line, *s, *e)
-                })
-        {
+        if used_source_lines.iter().any(|(file_path, s, e)| {
+            file_path == &del.file_path && line_overlap(del.start_line, del.end_line, *s, *e)
+        }) || used_dest_lines.iter().any(|(file_path, s, e)| {
+            file_path == &add.file_path && line_overlap(add.start_line, add.end_line, *s, *e)
+        }) {
             continue;
         }
 
@@ -279,9 +283,8 @@ pub fn detect_moves(files: &mut [FileDiff]) {
 
     // Distribute matches back to the relevant FileDiff entries.
     for file in files.iter_mut() {
-        let file_matches = |path: &PathBuf| {
-            file.path == *path || file.old_path.as_deref() == Some(path.as_path())
-        };
+        let file_matches =
+            |path: &PathBuf| file.path == *path || file.old_path.as_deref() == Some(path.as_path());
 
         for m in &matches {
             if file_matches(&m.source_file) || file_matches(&m.dest_file) {
@@ -324,9 +327,13 @@ fn build_move_candidates(
         let min_lookup_len = min_candidate_len.min(max_lookup_len);
         let max_lookup_len = max_candidate_len.min(max_lookup_len);
 
-        for add_len in min_lookup_len..=max_lookup_len {
-            for &(add_idx, add) in &added_by_length[add_len] {
-                if !can_reach_similarity_threshold(del.line_count, add.line_count, SIMILARITY_THRESHOLD) {
+        for add_len_bucket in &added_by_length[min_lookup_len..=max_lookup_len] {
+            for &(add_idx, add) in add_len_bucket {
+                if !can_reach_similarity_threshold(
+                    del.line_count,
+                    add.line_count,
+                    SIMILARITY_THRESHOLD,
+                ) {
                     continue;
                 }
 
@@ -526,8 +533,14 @@ mod tests {
         detect_moves(&mut files);
 
         assert_eq!(files[0].move_matches.len(), 1);
-        assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/main.rs"));
-        assert_eq!(files[0].move_matches[0].dest_file, PathBuf::from("src/main.rs"));
+        assert_eq!(
+            files[0].move_matches[0].source_file,
+            PathBuf::from("src/main.rs")
+        );
+        assert_eq!(
+            files[0].move_matches[0].dest_file,
+            PathBuf::from("src/main.rs")
+        );
     }
 
     #[test]
@@ -557,19 +570,14 @@ mod tests {
                 tokens: vec![],
             });
 
-            lines.extend(
-                moved_lines
-                    .iter()
-                    .enumerate()
-                    .map(|(i, text)| DiffLine {
-                        kind: LineKind::Added,
-                        old_line_no: None,
-                        new_line_no: Some(start + i),
-                        old_text: None,
-                        new_text: Some((*text).to_string()),
-                        tokens: vec![],
-                    }),
-            );
+            lines.extend(moved_lines.iter().enumerate().map(|(i, text)| DiffLine {
+                kind: LineKind::Added,
+                old_line_no: None,
+                new_line_no: Some(start + i),
+                old_text: None,
+                new_text: Some((*text).to_string()),
+                tokens: vec![],
+            }));
 
             FileDiff {
                 path: PathBuf::from(path),
@@ -589,7 +597,10 @@ mod tests {
             }
         }
 
-        let mut files = vec![moved_file("src/a.rs", 10, &moved_lines), moved_file("src/b.rs", 10, &moved_lines)];
+        let mut files = vec![
+            moved_file("src/a.rs", 10, &moved_lines),
+            moved_file("src/b.rs", 10, &moved_lines),
+        ];
 
         detect_moves(&mut files);
 
@@ -604,8 +615,14 @@ mod tests {
             "second file should keep its move match"
         );
 
-        assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/a.rs"));
-        assert_eq!(files[1].move_matches[0].source_file, PathBuf::from("src/b.rs"));
+        assert_eq!(
+            files[0].move_matches[0].source_file,
+            PathBuf::from("src/a.rs")
+        );
+        assert_eq!(
+            files[1].move_matches[0].source_file,
+            PathBuf::from("src/b.rs")
+        );
     }
 
     fn build_synthetic_file_with_block_sizes(
@@ -617,18 +634,19 @@ mod tests {
         let mut old_line = 1usize;
         let mut new_line = 1usize;
 
-        let push_context = |lines: &mut Vec<DiffLine>, old_line: &mut usize, new_line: &mut usize| {
-            lines.push(DiffLine {
-                kind: LineKind::Context,
-                old_line_no: Some(*old_line),
-                new_line_no: Some(*new_line),
-                old_text: Some("// gap".to_string()),
-                new_text: Some("// gap".to_string()),
-                tokens: vec![],
-            });
-            *old_line += 1;
-            *new_line += 1;
-        };
+        let push_context =
+            |lines: &mut Vec<DiffLine>, old_line: &mut usize, new_line: &mut usize| {
+                lines.push(DiffLine {
+                    kind: LineKind::Context,
+                    old_line_no: Some(*old_line),
+                    new_line_no: Some(*new_line),
+                    old_text: Some("// gap".to_string()),
+                    new_text: Some("// gap".to_string()),
+                    tokens: vec![],
+                });
+                *old_line += 1;
+                *new_line += 1;
+            };
 
         for (idx, &size) in deleted_sizes.iter().enumerate() {
             for i in 0..size {
@@ -685,11 +703,8 @@ mod tests {
     fn test_move_candidate_generation_prunes_size_incompatible_blocks() {
         let deleted_sizes: Vec<usize> = vec![3; 200];
         let added_sizes: Vec<usize> = vec![20; 200];
-        let file = build_synthetic_file_with_block_sizes(
-            "src/huge.rs",
-            &deleted_sizes,
-            &added_sizes,
-        );
+        let file =
+            build_synthetic_file_with_block_sizes("src/huge.rs", &deleted_sizes, &added_sizes);
 
         let blocks = extract_blocks(&[file]);
         let deleted_blocks: Vec<(usize, &Block)> = blocks
@@ -778,8 +793,14 @@ mod tests {
         detect_moves(&mut files);
 
         assert_eq!(files[0].move_matches.len(), 1);
-        assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
-        assert_eq!(files[0].move_matches[0].dest_file, PathBuf::from("src/new_name.rs"));
+        assert_eq!(
+            files[0].move_matches[0].source_file,
+            PathBuf::from("src/old_name.rs")
+        );
+        assert_eq!(
+            files[0].move_matches[0].dest_file,
+            PathBuf::from("src/new_name.rs")
+        );
     }
 
     #[test]
@@ -865,11 +886,31 @@ mod tests {
 
         detect_moves(&mut files);
 
-        assert_eq!(files[0].move_matches.len(), 1, "renamed source file should keep move match");
-        assert_eq!(files[1].move_matches.len(), 1, "destination file should keep move match");
-        assert_eq!(files[0].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
-        assert_eq!(files[0].move_matches[0].dest_file, PathBuf::from("src/other.rs"));
-        assert_eq!(files[1].move_matches[0].source_file, PathBuf::from("src/old_name.rs"));
-        assert_eq!(files[1].move_matches[0].dest_file, PathBuf::from("src/other.rs"));
+        assert_eq!(
+            files[0].move_matches.len(),
+            1,
+            "renamed source file should keep move match"
+        );
+        assert_eq!(
+            files[1].move_matches.len(),
+            1,
+            "destination file should keep move match"
+        );
+        assert_eq!(
+            files[0].move_matches[0].source_file,
+            PathBuf::from("src/old_name.rs")
+        );
+        assert_eq!(
+            files[0].move_matches[0].dest_file,
+            PathBuf::from("src/other.rs")
+        );
+        assert_eq!(
+            files[1].move_matches[0].source_file,
+            PathBuf::from("src/old_name.rs")
+        );
+        assert_eq!(
+            files[1].move_matches[0].dest_file,
+            PathBuf::from("src/other.rs")
+        );
     }
 }

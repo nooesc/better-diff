@@ -152,8 +152,14 @@ mod tests {
         let manager = WorktreeManager::discover(tmp.path()).expect("discover");
         assert_eq!(manager.worktrees().len(), 3);
         // Linked worktrees should be sorted: wt-a before wt-b
-        let wt1_name = manager.worktrees()[1].file_name().unwrap().to_string_lossy();
-        let wt2_name = manager.worktrees()[2].file_name().unwrap().to_string_lossy();
+        let wt1_name = manager.worktrees()[1]
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        let wt2_name = manager.worktrees()[2]
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
         assert_eq!(wt1_name, "wt-a");
         assert_eq!(wt2_name, "wt-b");
     }

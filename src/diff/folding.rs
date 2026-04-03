@@ -213,9 +213,7 @@ impl Foo {
 "#;
         let regions = compute_fold_regions(source);
 
-        let struct_region = regions
-            .iter()
-            .find(|r| r.kind == FoldKind::Struct);
+        let struct_region = regions.iter().find(|r| r.kind == FoldKind::Struct);
 
         assert!(
             struct_region.is_some(),
@@ -241,9 +239,7 @@ impl Foo {
 "#;
         let regions = compute_fold_regions(source);
 
-        let enum_region = regions
-            .iter()
-            .find(|r| r.kind == FoldKind::Enum);
+        let enum_region = regions.iter().find(|r| r.kind == FoldKind::Enum);
 
         assert!(
             enum_region.is_some(),

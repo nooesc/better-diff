@@ -43,8 +43,7 @@ struct RawLine {
 
 impl DiffProvider for Git2Provider {
     fn compute_diff(&self, repo_path: &Path, mode: &DiffMode) -> Result<Vec<FileDiff>> {
-        let repo =
-            Repository::discover(repo_path).context("Failed to discover git repository")?;
+        let repo = Repository::discover(repo_path).context("Failed to discover git repository")?;
 
         let mut opts = DiffOptions::new();
         opts.context_lines(3);
@@ -62,13 +61,17 @@ impl DiffProvider for Git2Provider {
                     .context("Failed to compute staged diff")?
             }
             DiffMode::Commits { from_ref, to_ref } => {
-                let from_obj = repo.revparse_single(from_ref)
+                let from_obj = repo
+                    .revparse_single(from_ref)
                     .with_context(|| format!("Failed to resolve ref '{}'", from_ref))?;
-                let to_obj = repo.revparse_single(to_ref)
+                let to_obj = repo
+                    .revparse_single(to_ref)
                     .with_context(|| format!("Failed to resolve ref '{}'", to_ref))?;
-                let from_tree = from_obj.peel_to_tree()
+                let from_tree = from_obj
+                    .peel_to_tree()
                     .with_context(|| format!("Failed to peel '{}' to tree", from_ref))?;
-                let to_tree = to_obj.peel_to_tree()
+                let to_tree = to_obj
+                    .peel_to_tree()
                     .with_context(|| format!("Failed to peel '{}' to tree", to_ref))?;
                 repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
                     .context("Failed to compute commit diff")?
@@ -97,17 +100,13 @@ impl DiffProvider for Git2Provider {
                 let old_path = if matches!(status, FileStatus::Added) {
                     None
                 } else {
-                    delta
-                        .old_file()
-                        .path()
-                        .map(Path::to_path_buf)
-                        .or_else(|| {
-                            if path.as_os_str().is_empty() {
-                                None
-                            } else {
-                                Some(path.clone())
-                            }
-                        })
+                    delta.old_file().path().map(Path::to_path_buf).or_else(|| {
+                        if path.as_os_str().is_empty() {
+                            None
+                        } else {
+                            Some(path.clone())
+                        }
+                    })
                 };
 
                 raw_files.borrow_mut().push(RawFile {
@@ -267,15 +266,11 @@ impl DiffProvider for Git2Provider {
             };
 
             if !file_diff.new_content.is_empty() {
-                file_diff.fold_regions = compute_fold_regions_for_path(
-                    fold_path,
-                    &file_diff.new_content,
-                );
+                file_diff.fold_regions =
+                    compute_fold_regions_for_path(fold_path, &file_diff.new_content);
             } else if !file_diff.old_content.is_empty() {
-                file_diff.fold_regions = compute_fold_regions_for_path(
-                    fold_path,
-                    &file_diff.old_content,
-                );
+                file_diff.fold_regions =
+                    compute_fold_regions_for_path(fold_path, &file_diff.old_content);
             }
         }
 
@@ -288,14 +283,16 @@ impl DiffProvider for Git2Provider {
 
 /// Load a file's content from a specific git ref (commit SHA, branch name, tag, etc.).
 fn load_content_from_ref(repo: &Repository, path: &Path, ref_name: &str) -> Result<String> {
-    let obj = repo.revparse_single(ref_name)
+    let obj = repo
+        .revparse_single(ref_name)
         .with_context(|| format!("Failed to resolve ref '{}'", ref_name))?;
-    let tree = obj.peel_to_tree()
+    let tree = obj
+        .peel_to_tree()
         .with_context(|| format!("Failed to peel '{}' to tree", ref_name))?;
-    let entry = tree.get_path(path)
+    let entry = tree
+        .get_path(path)
         .with_context(|| format!("File '{}' not found in '{}'", path.display(), ref_name))?;
-    let blob = repo.find_blob(entry.id())
-        .context("Failed to find blob")?;
+    let blob = repo.find_blob(entry.id()).context("Failed to find blob")?;
     Ok(String::from_utf8_lossy(blob.content()).to_string())
 }
 
@@ -303,12 +300,8 @@ fn load_content_from_ref(repo: &Repository, path: &Path, ref_name: &str) -> Resu
 fn load_old_content(repo: &Repository, path: &Path) -> Result<String> {
     let head = repo.head().context("Failed to get HEAD")?;
     let tree = head.peel_to_tree().context("Failed to peel HEAD to tree")?;
-    let entry = tree
-        .get_path(path)
-        .context("File not found in HEAD tree")?;
-    let blob = repo
-        .find_blob(entry.id())
-        .context("Failed to find blob")?;
+    let entry = tree.get_path(path).context("File not found in HEAD tree")?;
+    let blob = repo.find_blob(entry.id()).context("Failed to find blob")?;
     let content = String::from_utf8_lossy(blob.content()).to_string();
     Ok(content)
 }
@@ -327,9 +320,7 @@ fn load_new_content(repo: &Repository, path: &Path) -> Result<String> {
 /// Load the staged (index) version of a file from the git index.
 fn load_staged_content(repo: &Repository, path: &Path) -> Result<String> {
     let index = repo.index().context("Failed to read index")?;
-    let entry = index
-        .get_path(path, 0)
-        .context("File not found in index")?;
+    let entry = index.get_path(path, 0).context("File not found in index")?;
     let blob = repo
         .find_blob(entry.id)
         .context("Failed to find blob for index entry")?;
@@ -375,14 +366,8 @@ fn compute_line_tokens(hunk: &mut Hunk) {
             let del_idx = del_start + p;
             let add_idx = add_start + p;
 
-            let old_text = hunk.lines[del_idx]
-                .old_text
-                .clone()
-                .unwrap_or_default();
-            let new_text = hunk.lines[add_idx]
-                .new_text
-                .clone()
-                .unwrap_or_default();
+            let old_text = hunk.lines[del_idx].old_text.clone().unwrap_or_default();
+            let new_text = hunk.lines[add_idx].new_text.clone().unwrap_or_default();
 
             let (old_tokens, new_tokens) = compute_token_changes(&old_text, &new_text);
 

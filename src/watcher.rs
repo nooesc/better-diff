@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
+use notify_debouncer_mini::{DebounceEventResult, new_debouncer};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -73,8 +73,7 @@ impl WatcherSet {
         // Rebuild all remaining watchers with correct indices
         let paths: Vec<PathBuf> = self.watchers.drain(..).map(|(p, _)| p).collect();
         for (i, path) in paths.into_iter().enumerate() {
-            if let Ok(debouncer) =
-                create_worktree_watcher(i, &path, &self.sender, self.generation)
+            if let Ok(debouncer) = create_worktree_watcher(i, &path, &self.sender, self.generation)
             {
                 self.watchers.push((path, debouncer));
             }

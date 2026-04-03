@@ -91,8 +91,14 @@ mod tests {
         // Use space-separated tokens to get clean word boundaries
         let (old, new) = compute_token_changes("foo a b", "bar a b");
         // "foo" was deleted and "bar" was inserted — should be promoted to Rename
-        let old_renames: Vec<_> = old.iter().filter(|t| t.kind == ChangeKind::Rename).collect();
-        let new_renames: Vec<_> = new.iter().filter(|t| t.kind == ChangeKind::Rename).collect();
+        let old_renames: Vec<_> = old
+            .iter()
+            .filter(|t| t.kind == ChangeKind::Rename)
+            .collect();
+        let new_renames: Vec<_> = new
+            .iter()
+            .filter(|t| t.kind == ChangeKind::Rename)
+            .collect();
 
         assert_eq!(old_renames.len(), 1, "Expected one rename in old tokens");
         assert_eq!(old_renames[0].text, "foo");
@@ -106,10 +112,7 @@ mod tests {
         // There should be additions in new_tokens for the extra ", c" part
         let additions: Vec<_> = new
             .iter()
-            .filter(|t| {
-                t.kind == ChangeKind::Addition
-                    || t.kind == ChangeKind::Rename
-            })
+            .filter(|t| t.kind == ChangeKind::Addition || t.kind == ChangeKind::Rename)
             .collect();
 
         assert!(!additions.is_empty(), "Expected addition tokens in new");
@@ -122,14 +125,19 @@ mod tests {
 
         // The diff may detect some tokens as changed depending on the diff algorithm.
         // The key assertion is that "c" appears as added in the new side.
-        let has_c = new
-            .iter()
-            .any(|t| (t.kind == ChangeKind::Addition || t.kind == ChangeKind::Rename) && t.text.contains('c'));
+        let has_c = new.iter().any(|t| {
+            (t.kind == ChangeKind::Addition || t.kind == ChangeKind::Rename) && t.text.contains('c')
+        });
         assert!(has_c, "Expected 'c' to appear as an addition: {:?}", new);
 
         // If there are deletions, they should be paired as renames
         for t in &old_non_equal {
-            assert_eq!(t.kind, ChangeKind::Rename, "Unpaired deletion found: {:?}", t);
+            assert_eq!(
+                t.kind,
+                ChangeKind::Rename,
+                "Unpaired deletion found: {:?}",
+                t
+            );
         }
     }
 
@@ -139,18 +147,15 @@ mod tests {
         // There should be deletions in old_tokens for the removed ", c" part
         let deletions: Vec<_> = old
             .iter()
-            .filter(|t| {
-                t.kind == ChangeKind::Deletion
-                    || t.kind == ChangeKind::Rename
-            })
+            .filter(|t| t.kind == ChangeKind::Deletion || t.kind == ChangeKind::Rename)
             .collect();
 
         assert!(!deletions.is_empty(), "Expected deletion tokens in old");
 
         // The key assertion is that "c" appears as deleted in the old side
-        let has_c = old
-            .iter()
-            .any(|t| (t.kind == ChangeKind::Deletion || t.kind == ChangeKind::Rename) && t.text.contains('c'));
+        let has_c = old.iter().any(|t| {
+            (t.kind == ChangeKind::Deletion || t.kind == ChangeKind::Rename) && t.text.contains('c')
+        });
         assert!(has_c, "Expected 'c' to appear as a deletion: {:?}", old);
     }
 
@@ -162,8 +167,14 @@ mod tests {
         );
 
         // "result" -> "output" and "process" -> "transform" should be renames
-        let old_renames: Vec<_> = old.iter().filter(|t| t.kind == ChangeKind::Rename).collect();
-        let new_renames: Vec<_> = new.iter().filter(|t| t.kind == ChangeKind::Rename).collect();
+        let old_renames: Vec<_> = old
+            .iter()
+            .filter(|t| t.kind == ChangeKind::Rename)
+            .collect();
+        let new_renames: Vec<_> = new
+            .iter()
+            .filter(|t| t.kind == ChangeKind::Rename)
+            .collect();
 
         assert!(
             old_renames.len() >= 2,

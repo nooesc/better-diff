@@ -1,5 +1,5 @@
-use std::sync::OnceLock;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use ratatui::style::Style;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
@@ -269,8 +269,11 @@ macro_rules! define_query {
             static QUERY: OnceLock<Query> = OnceLock::new();
             QUERY.get_or_init(|| {
                 let language: tree_sitter::Language = $ts_lang.into();
-                Query::new(&language, $query_source)
-                    .expect(concat!("Failed to compile ", stringify!($fn_name), " highlight query"))
+                Query::new(&language, $query_source).expect(concat!(
+                    "Failed to compile ",
+                    stringify!($fn_name),
+                    " highlight query"
+                ))
             })
         }
     };
@@ -278,8 +281,16 @@ macro_rules! define_query {
 
 define_query!(rust_query, tree_sitter_rust::LANGUAGE, RUST_QUERY_SOURCE);
 define_query!(js_query, tree_sitter_javascript::LANGUAGE, JS_QUERY_SOURCE);
-define_query!(ts_query, tree_sitter_typescript::LANGUAGE_TSX, TS_QUERY_SOURCE);
-define_query!(python_query, tree_sitter_python::LANGUAGE, PYTHON_QUERY_SOURCE);
+define_query!(
+    ts_query,
+    tree_sitter_typescript::LANGUAGE_TSX,
+    TS_QUERY_SOURCE
+);
+define_query!(
+    python_query,
+    tree_sitter_python::LANGUAGE,
+    PYTHON_QUERY_SOURCE
+);
 define_query!(lua_query, tree_sitter_lua::LANGUAGE, LUA_QUERY_SOURCE);
 define_query!(go_query, tree_sitter_go::LANGUAGE, GO_QUERY_SOURCE);
 define_query!(c_query, tree_sitter_c::LANGUAGE, C_QUERY_SOURCE);
@@ -291,8 +302,16 @@ define_query!(html_query, tree_sitter_html::LANGUAGE, HTML_QUERY_SOURCE);
 define_query!(css_query, tree_sitter_css::LANGUAGE, CSS_QUERY_SOURCE);
 define_query!(java_query, tree_sitter_java::LANGUAGE, JAVA_QUERY_SOURCE);
 define_query!(ruby_query, tree_sitter_ruby::LANGUAGE, RUBY_QUERY_SOURCE);
-define_query!(csharp_query, tree_sitter_c_sharp::LANGUAGE, CSHARP_QUERY_SOURCE);
-define_query!(elixir_query, tree_sitter_elixir::LANGUAGE, ELIXIR_QUERY_SOURCE);
+define_query!(
+    csharp_query,
+    tree_sitter_c_sharp::LANGUAGE,
+    CSHARP_QUERY_SOURCE
+);
+define_query!(
+    elixir_query,
+    tree_sitter_elixir::LANGUAGE,
+    ELIXIR_QUERY_SOURCE
+);
 define_query!(zig_query, tree_sitter_zig::LANGUAGE, ZIG_QUERY_SOURCE);
 
 #[derive(Debug, Clone, Copy)]
@@ -452,7 +471,7 @@ pub fn highlight_rust(source: &str) -> Vec<Vec<HighlightSpan>> {
         return vec![Vec::new(); build_line_starts(source).len()];
     };
 
-    highlight_from_tree(tree, source, &rust_query())
+    highlight_from_tree(tree, source, rust_query())
 }
 
 /// Parse and highlight a source file by path-driven language detection.
@@ -477,7 +496,7 @@ fn highlight_from_tree(
     let line_starts = build_line_starts(source);
     let num_lines = line_starts.len(); // accounts for trailing content after last \n
     let mut result: Vec<Vec<HighlightSpan>> = vec![Vec::new(); num_lines];
-    
+
     let capture_names = query.capture_names();
     let root = tree.root_node();
 
@@ -495,7 +514,8 @@ fn highlight_from_tree(
                 let start_byte = node.start_byte();
                 let end_byte = node.end_byte();
                 let start_line = line_for_offset(&line_starts, start_byte);
-                let end_line = line_for_offset(&line_starts, end_byte.saturating_sub(1).max(start_byte));
+                let end_line =
+                    line_for_offset(&line_starts, end_byte.saturating_sub(1).max(start_byte));
 
                 for line in start_line..=end_line {
                     if line >= num_lines {
@@ -548,9 +568,7 @@ mod tests {
         );
 
         // Verify "fn" keyword is highlighted
-        let fn_span = highlights[0]
-            .iter()
-            .find(|s| s.start == 0 && s.end == 2);
+        let fn_span = highlights[0].iter().find(|s| s.start == 0 && s.end == 2);
         assert!(
             fn_span.is_some(),
             "Expected 'fn' keyword to be highlighted on line 0"
@@ -644,7 +662,8 @@ mod tests {
             match result {
                 Ok(highlights) => assert!(!highlights.is_empty()),
                 Err(e) => {
-                    let msg = e.downcast_ref::<String>()
+                    let msg = e
+                        .downcast_ref::<String>()
                         .map(|s| s.as_str())
                         .or_else(|| e.downcast_ref::<&str>().copied())
                         .unwrap_or("unknown panic");
@@ -652,6 +671,10 @@ mod tests {
                 }
             }
         }
-        assert!(failures.is_empty(), "Query compilation failures:\n{}", failures.join("\n"));
+        assert!(
+            failures.is_empty(),
+            "Query compilation failures:\n{}",
+            failures.join("\n")
+        );
     }
 }
