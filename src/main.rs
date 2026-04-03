@@ -115,6 +115,7 @@ fn main() -> Result<()> {
         should_quit: false,
         manager,
         live_mode: cli.live,
+        search: Default::default(),
     };
 
     let mut terminal = TerminalGuard::new()?;
@@ -223,9 +224,42 @@ fn run_event_loop(
                     _ => {}
                 },
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if app.search.input_active {
+                        // Search input mode
+                        match key.code {
+                            KeyCode::Esc => {
+                                app.search.clear();
+                            }
+                            KeyCode::Enter => {
+                                app.search.input_active = false;
+                                // Scroll to first match
+                                if let Some(line) = app.search.current_line() {
+                                    app.active_context_mut().scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                app.search.query.pop();
+                                run_search(app);
+                            }
+                            KeyCode::Char(c) => {
+                                app.search.query.push(c);
+                                run_search(app);
+                                if let Some(line) = app.search.current_line() {
+                                    app.active_context_mut().scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => {
-                            app.should_quit = true;
+                            if app.search.has_results() {
+                                app.search.clear();
+                            } else {
+                                app.should_quit = true;
+                            }
                         }
                         KeyCode::Char(']') => {
                             app.next_worktree();
@@ -288,32 +322,54 @@ fn run_event_loop(
                             }
                         }
                         KeyCode::Char('n') => {
-                            let ctx = app.active_context_mut();
-                            if ui::ensure_active_file_layout(ctx) {
-                                let total_lines = ctx.render_cache.layout.total_lines();
-                                let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
-                                ctx.next_hunk_with_offsets(
-                                    &hunk_starts,
-                                    total_lines,
-                                    visible_rows,
-                                );
-                                ctx.animation = Some(AnimationState::new());
-                                needs_clamp = true;
+                            if app.search.has_results() {
+                                app.search.next_match();
+                                if let Some(line) = app.search.current_line() {
+                                    app.active_context_mut().scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            } else {
+                                let ctx = app.active_context_mut();
+                                if ui::ensure_active_file_layout(ctx) {
+                                    let total_lines = ctx.render_cache.layout.total_lines();
+                                    let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
+                                    ctx.next_hunk_with_offsets(
+                                        &hunk_starts,
+                                        total_lines,
+                                        visible_rows,
+                                    );
+                                    ctx.animation = Some(AnimationState::new());
+                                    needs_clamp = true;
+                                }
                             }
                         }
                         KeyCode::Char('N') => {
-                            let ctx = app.active_context_mut();
-                            if ui::ensure_active_file_layout(ctx) {
-                                let total_lines = ctx.render_cache.layout.total_lines();
-                                let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
-                                ctx.prev_hunk_with_offsets(
-                                    &hunk_starts,
-                                    total_lines,
-                                    visible_rows,
-                                );
-                                ctx.animation = Some(AnimationState::new());
-                                needs_clamp = true;
+                            if app.search.has_results() {
+                                app.search.prev_match();
+                                if let Some(line) = app.search.current_line() {
+                                    app.active_context_mut().scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            } else {
+                                let ctx = app.active_context_mut();
+                                if ui::ensure_active_file_layout(ctx) {
+                                    let total_lines = ctx.render_cache.layout.total_lines();
+                                    let hunk_starts = ctx.render_cache.layout.hunk_starts().to_vec();
+                                    ctx.prev_hunk_with_offsets(
+                                        &hunk_starts,
+                                        total_lines,
+                                        visible_rows,
+                                    );
+                                    ctx.animation = Some(AnimationState::new());
+                                    needs_clamp = true;
+                                }
                             }
+                        }
+                        KeyCode::Char('/') => {
+                            app.search.query.clear();
+                            app.search.matches.clear();
+                            app.search.current_match = 0;
+                            app.search.input_active = true;
                         }
                         KeyCode::Char('s') => {
                             let ctx = app.active_context_mut();
@@ -343,6 +399,7 @@ fn run_event_loop(
                         }
                         _ => {}
                     }
+                    } // end else (not search input mode)
 
                     if app.should_quit {
                         return Ok(());
@@ -401,6 +458,15 @@ fn clamp_active(ctx: &mut WorktreeContext, visible_rows: usize) {
         ctx.clamp_scroll_offset(total_lines, visible_rows);
     } else {
         ctx.scroll_offset = 0;
+    }
+}
+
+fn run_search(app: &mut App) {
+    let query = app.search.query.clone();
+    let ctx = app.active_context_mut();
+    if ui::ensure_active_file_layout(ctx) {
+        app.search.matches = ctx.render_cache.layout.search(&query);
+        app.search.current_match = 0;
     }
 }
 

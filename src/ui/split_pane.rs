@@ -44,6 +44,45 @@ impl RenderedFileLayout {
     pub fn hunk_starts(&self) -> &[usize] {
         &self.hunk_start_offsets
     }
+
+    /// Search for a query string in all rendered lines.
+    /// Returns matches with line index, side, and byte offsets.
+    pub fn search(&self, query: &str) -> Vec<crate::app::SearchMatch> {
+        use crate::app::SearchMatch;
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let query_lower = query.to_lowercase();
+        let mut matches = Vec::new();
+        for (line_idx, pair) in self.lines.iter().enumerate() {
+            // Search old side
+            let old_text = line_text_content(&pair.old);
+            for (byte_start, _) in old_text.to_lowercase().match_indices(&query_lower) {
+                matches.push(SearchMatch {
+                    line_index: line_idx,
+                    is_new_side: false,
+                    byte_start,
+                    byte_end: byte_start + query.len(),
+                });
+            }
+            // Search new side
+            let new_text = line_text_content(&pair.new);
+            for (byte_start, _) in new_text.to_lowercase().match_indices(&query_lower) {
+                matches.push(SearchMatch {
+                    line_index: line_idx,
+                    is_new_side: true,
+                    byte_start,
+                    byte_end: byte_start + query.len(),
+                });
+            }
+        }
+        matches
+    }
+}
+
+/// Extract plain text content from a ratatui Line.
+fn line_text_content(line: &Line<'static>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
 }
 
 fn rendered_line(
@@ -71,6 +110,8 @@ pub fn render_split_pane(
     scroll_offset: usize,
     animation: Option<&AnimationState>,
     layout: &RenderedFileLayout,
+    search_matches: &[crate::app::SearchMatch],
+    current_search_match: usize,
 ) {
     let [left_area, right_area, minimap_area] = Layout::horizontal([
         Constraint::Percentage(49),
@@ -123,6 +164,37 @@ pub fn render_split_pane(
                     new_visible[i] = apply_flash_to_line(new_visible[i].clone(), flash_intensity);
                 }
             }
+        }
+    }
+
+    // Apply search match highlighting
+    for (match_idx, m) in search_matches.iter().enumerate() {
+        let vis_idx = m.line_index.saturating_sub(scroll_offset);
+        if m.line_index < scroll_offset || vis_idx >= visible_height {
+            continue;
+        }
+        let is_current = match_idx == current_search_match;
+        let highlight_style = if is_current {
+            Style::default().bg(Color::Yellow).fg(Color::Black)
+        } else {
+            Style::default().bg(Color::DarkGray).fg(Color::White)
+        };
+        if m.is_new_side {
+            if vis_idx < new_visible.len() {
+                new_visible[vis_idx] = apply_search_highlight(
+                    new_visible[vis_idx].clone(),
+                    m.byte_start,
+                    m.byte_end,
+                    highlight_style,
+                );
+            }
+        } else if vis_idx < old_visible.len() {
+            old_visible[vis_idx] = apply_search_highlight(
+                old_visible[vis_idx].clone(),
+                m.byte_start,
+                m.byte_end,
+                highlight_style,
+            );
         }
     }
 
@@ -739,6 +811,50 @@ fn apply_flash_to_line(line: Line<'static>, intensity: u8) -> Line<'static> {
         })
         .collect();
     Line::from(new_spans)
+}
+
+/// Apply search highlight to a specific byte range within a Line.
+fn apply_search_highlight(
+    line: Line<'static>,
+    byte_start: usize,
+    byte_end: usize,
+    style: Style,
+) -> Line<'static> {
+    let mut result_spans: Vec<Span<'static>> = Vec::new();
+    let mut pos = 0usize;
+
+    for span in line.spans {
+        let span_len = span.content.len();
+        let span_end = pos + span_len;
+
+        if span_end <= byte_start || pos >= byte_end {
+            // Span is entirely outside the highlight range
+            result_spans.push(span);
+        } else {
+            // Span overlaps with highlight range
+            let hl_start = byte_start.saturating_sub(pos);
+            let hl_end = (byte_end - pos).min(span_len);
+
+            if hl_start > 0 {
+                result_spans.push(Span::styled(
+                    span.content[..hl_start].to_string(),
+                    span.style,
+                ));
+            }
+            result_spans.push(Span::styled(
+                span.content[hl_start..hl_end].to_string(),
+                style,
+            ));
+            if hl_end < span_len {
+                result_spans.push(Span::styled(
+                    span.content[hl_end..].to_string(),
+                    span.style,
+                ));
+            }
+        }
+        pos = span_end;
+    }
+    Line::from(result_spans)
 }
 
 /// Which side of the diff a token line is being built for.

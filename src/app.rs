@@ -312,12 +312,62 @@ impl WorktreeContext {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SearchMatch {
+    pub line_index: usize,
+    pub is_new_side: bool,
+    pub byte_start: usize,
+    pub byte_end: usize,
+}
+
+#[derive(Default)]
+pub struct SearchState {
+    pub query: String,
+    pub matches: Vec<SearchMatch>,
+    pub current_match: usize,
+    pub input_active: bool,
+}
+
+impl SearchState {
+    pub fn clear(&mut self) {
+        self.query.clear();
+        self.matches.clear();
+        self.current_match = 0;
+        self.input_active = false;
+    }
+
+    pub fn has_results(&self) -> bool {
+        !self.matches.is_empty()
+    }
+
+    pub fn next_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = (self.current_match + 1) % self.matches.len();
+        }
+    }
+
+    pub fn prev_match(&mut self) {
+        if !self.matches.is_empty() {
+            self.current_match = if self.current_match == 0 {
+                self.matches.len() - 1
+            } else {
+                self.current_match - 1
+            };
+        }
+    }
+
+    pub fn current_line(&self) -> Option<usize> {
+        self.matches.get(self.current_match).map(|m| m.line_index)
+    }
+}
+
 pub struct App {
     pub contexts: Vec<WorktreeContext>,
     pub active_worktree: usize,
     pub should_quit: bool,
     pub manager: WorktreeManager,
     pub live_mode: bool,
+    pub search: SearchState,
 }
 
 impl App {

@@ -39,6 +39,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let worktree_count = app.contexts.len();
     let active_worktree_index = app.active_worktree;
     let live_mode = app.live_mode;
+    let search_matches = app.search.matches.clone();
+    let current_search_match = app.search.current_match;
+    let search_input_active = app.search.input_active;
+    let search_query = app.search.query.clone();
+    let search_match_count = app.search.matches.len();
     let ctx = app.active_context_mut();
 
     let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
@@ -131,6 +136,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             ctx.scroll_offset,
             ctx.animation.as_ref(),
             layout,
+            &search_matches,
+            current_search_match,
         );
     } else {
         let content = Paragraph::new("No changes to display").block(
@@ -145,8 +152,28 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let key = Style::default().fg(Color::Yellow);
     let dim = Style::default().fg(Color::DarkGray);
     let mut status_spans = vec![];
+    if search_input_active {
+        status_spans.push(Span::styled(" /", Style::default().fg(Color::Cyan)));
+        status_spans.push(Span::styled(
+            search_query.clone(),
+            Style::default().fg(Color::White),
+        ));
+        status_spans.push(Span::styled("▎", Style::default().fg(Color::Cyan)));
+        if search_match_count > 0 {
+            status_spans.push(Span::styled(
+                format!(" [{}/{}]", current_search_match + 1, search_match_count),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    } else {
     if live_mode {
         status_spans.push(Span::styled(" LIVE ", Style::default().fg(Color::Green)));
+    }
+    if !search_query.is_empty() && search_match_count > 0 {
+        status_spans.push(Span::styled(
+            format!(" /{} [{}/{}]", search_query, current_search_match + 1, search_match_count),
+            Style::default().fg(Color::Yellow),
+        ));
     }
     status_spans.extend([
         Span::styled(" [q]", key), Span::styled("uit ", dim),
@@ -155,15 +182,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Span::styled("[g/G]", key), Span::styled(" top/bottom ", dim),
         Span::styled("[s]", key), Span::styled(" staged ", dim),
         Span::styled("[w]", key), Span::styled("orking tree ", dim),
-        Span::styled("[n/N]", key), Span::styled(" hunks ", dim),
+        Span::styled("[n/N]", key), Span::styled(" hunks/search ", dim),
         Span::styled("[c]", key), Span::styled("ollapse", dim),
     ]);
     if worktree_count > 1 {
         status_spans.push(Span::styled(" ]", key));
         status_spans.push(Span::styled(" wt", dim));
     }
+    status_spans.push(Span::styled(" [/]", key));
+    status_spans.push(Span::styled("search ", dim));
     status_spans.push(Span::styled(" [L]", key));
     status_spans.push(Span::styled("ive", dim));
+    } // end else (not search_input_active)
     let status_line = Line::from(status_spans);
     frame.render_widget(Paragraph::new(status_line), status_area);
 }
