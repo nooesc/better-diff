@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_identical_blocks_match() {
-        let lines = vec![
+        let lines = [
             "fn foo() {",
             "    let x = 1;",
             "    let y = 2;",
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_detect_move_within_file() {
-        let moved_lines = vec![
+        let moved_lines = [
             "fn moved_function() {",
             "    let a = 10;",
             "    let b = 20;",
@@ -459,13 +459,13 @@ mod tests {
 
     #[test]
     fn test_detect_move_within_length_ratio_window() {
-        let deleted_lines = vec![
+        let deleted_lines = [
             "fn moved_function() {",
             "    let a = 10;",
             "    let b = 20;",
             "    let c = 30;",
         ];
-        let added_lines = vec![
+        let added_lines = [
             "fn moved_function() {",
             "    let a = 10;",
             "    let b = 20;",

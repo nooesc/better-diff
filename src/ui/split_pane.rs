@@ -246,24 +246,38 @@ fn render_unified(
     let total_lines = rendered_lines.len();
     let visible_height = content_area.height.saturating_sub(2) as usize;
 
-    // Build unified lines: for changed lines show old then new; for context show once
+    // Build unified lines and a mapping from layout line index to unified line indices.
+    // Changed pairs expand into two lines (old then new), so the unified list can be
+    // longer than the layout list. We track old_side and new_side unified indices per
+    // layout line so search highlights land at the correct position.
     let mut unified: Vec<Line> = Vec::new();
+    let mut layout_to_unified_old: Vec<Option<usize>> = Vec::new();
+    let mut layout_to_unified_new: Vec<Option<usize>> = Vec::new();
     for pair in rendered_lines.iter() {
         let old_empty = line_text_content(&pair.old).trim().is_empty();
         let new_empty = line_text_content(&pair.new).trim().is_empty();
         if pair.is_changed {
+            let mut old_idx = None;
+            let mut new_idx = None;
             if !old_empty {
+                old_idx = Some(unified.len());
                 unified.push(pair.old.clone());
             }
             if !new_empty {
+                new_idx = Some(unified.len());
                 unified.push(pair.new.clone());
             }
             if old_empty && new_empty {
+                new_idx = Some(unified.len());
                 unified.push(pair.new.clone());
             }
+            layout_to_unified_old.push(old_idx);
+            layout_to_unified_new.push(new_idx);
         } else {
-            // Context line — show either side (they are identical)
+            let idx = unified.len();
             unified.push(pair.new.clone());
+            layout_to_unified_old.push(Some(idx));
+            layout_to_unified_new.push(Some(idx));
         }
     }
 
@@ -290,10 +304,27 @@ fn render_unified(
         }
     }
 
-    // Apply search highlights (both sides map to same unified list)
+    // Apply search highlights using the layout-to-unified mapping
     for (match_idx, m) in search_matches.iter().enumerate() {
-        let vis_idx = m.line_index.saturating_sub(scroll_offset);
-        if m.line_index < scroll_offset || vis_idx >= visible_height || vis_idx >= visible.len() {
+        // Map layout line index to unified line index
+        let unified_idx = if m.line_index >= layout_to_unified_old.len() {
+            continue;
+        } else if m.is_new_side {
+            match layout_to_unified_new[m.line_index] {
+                Some(idx) => idx,
+                None => continue,
+            }
+        } else {
+            match layout_to_unified_old[m.line_index] {
+                Some(idx) => idx,
+                None => continue,
+            }
+        };
+        if unified_idx < scroll_offset {
+            continue;
+        }
+        let vis_idx = unified_idx - scroll_offset;
+        if vis_idx >= visible_height || vis_idx >= visible.len() {
             continue;
         }
         let is_current = match_idx == current_search_match;
@@ -1062,8 +1093,8 @@ fn build_token_line(line: &DiffLine, side: Side) -> Line<'static> {
                 .add_modifier(Modifier::BOLD)
         } else if token.kind == ChangeKind::Rename {
             Style::default()
-                .fg(Color::Blue)
-                .bg(Color::Rgb(0, 0, 80))
+                .fg(t.diff_rename_fg)
+                .bg(t.diff_rename_bg)
                 .add_modifier(Modifier::BOLD)
         } else {
             // Opposite-side tokens shouldn't appear here; handle gracefully

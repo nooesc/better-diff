@@ -521,9 +521,7 @@ mod tests {
             .compute_diff(&repo_path, &DiffMode::WorkingTree)
             .expect("Failed to compute diff");
 
-        let new_file_diff = diffs
-            .iter()
-            .find(|d| d.path == PathBuf::from("new_file.txt"));
+        let new_file_diff = diffs.iter().find(|d| d.path.as_os_str() == "new_file.txt");
         assert!(
             new_file_diff.is_some(),
             "Expected to find the new file in diffs"

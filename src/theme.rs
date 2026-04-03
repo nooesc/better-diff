@@ -34,6 +34,8 @@ pub struct Theme {
     pub diff_del_fg: Color,
     pub diff_del_bg: Color,
     pub diff_del_token_bg: Color,
+    pub diff_rename_fg: Color,
+    pub diff_rename_bg: Color,
 
     // UI colors
     pub ui_line_number: Color,
@@ -69,6 +71,8 @@ impl Theme {
             diff_del_fg: Color::Red,
             diff_del_bg: Color::Rgb(40, 0, 0),
             diff_del_token_bg: Color::Rgb(80, 0, 0),
+            diff_rename_fg: Color::Blue,
+            diff_rename_bg: Color::Rgb(0, 0, 80),
 
             ui_line_number: Color::DarkGray,
             ui_header: Color::DarkGray,
@@ -103,6 +107,8 @@ impl Theme {
             diff_del_fg: Color::Rgb(160, 0, 0),
             diff_del_bg: Color::Rgb(255, 220, 220),
             diff_del_token_bg: Color::Rgb(255, 180, 180),
+            diff_rename_fg: Color::Rgb(0, 0, 180),
+            diff_rename_bg: Color::Rgb(220, 220, 255),
 
             ui_line_number: Color::Rgb(128, 128, 128),
             ui_header: Color::Rgb(128, 128, 128),
@@ -137,6 +143,8 @@ impl Theme {
             diff_del_fg: Color::Rgb(249, 38, 114),
             diff_del_bg: Color::Rgb(50, 10, 20),
             diff_del_token_bg: Color::Rgb(80, 20, 30),
+            diff_rename_fg: Color::Rgb(102, 217, 239),
+            diff_rename_bg: Color::Rgb(10, 30, 50),
 
             ui_line_number: Color::Rgb(117, 113, 94),
             ui_header: Color::Rgb(117, 113, 94),
