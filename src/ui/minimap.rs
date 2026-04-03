@@ -36,20 +36,14 @@ impl Minimap {
     pub fn with_rendered_lines(
         scroll_offset: usize,
         visible_height: usize,
-        mut changed_lines: Vec<bool>,
+        changed_lines: &[bool],
         total_lines: usize,
     ) -> Self {
-        if changed_lines.len() < total_lines {
-            changed_lines.resize(total_lines, false);
-        } else if changed_lines.len() > total_lines {
-            changed_lines.truncate(total_lines);
-        }
-
         Self {
             scroll_offset,
             visible_height,
             total_lines,
-            changed_lines,
+            changed_lines: changed_lines.to_vec(),
         }
     }
 

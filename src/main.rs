@@ -95,10 +95,6 @@ fn main() -> Result<()> {
             return Ok(());
         }
         let ctx = WorktreeContext::from_files(files);
-        if let Some(level) = config.collapse_level() {
-            // Apply collapse level to the stdin context below
-            let _ = level; // handled in app construction
-        }
         return run_stdin_mode(ctx, &config);
     }
 
@@ -218,11 +214,11 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                             }
                             KeyCode::Backspace => {
                                 search.query.pop();
-                                run_search_on_ctx(&mut ctx, &mut search);
+                                do_search(&mut ctx, &mut search);
                             }
                             KeyCode::Char(c) => {
                                 search.query.push(c);
-                                run_search_on_ctx(&mut ctx, &mut search);
+                                do_search(&mut ctx, &mut search);
                                 if let Some(line) = search.current_line() {
                                     ctx.scroll_offset = line;
                                     needs_clamp = true;
@@ -311,10 +307,7 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
                                 }
                             }
                             KeyCode::Char('/') => {
-                                search.query.clear();
-                                search.matches.clear();
-                                search.current_match = 0;
-                                search.input_active = true;
+                                search.open();
                             }
                             KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                                 let index = (c as usize) - ('1' as usize);
@@ -361,7 +354,7 @@ fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
     }
 }
 
-fn run_search_on_ctx(ctx: &mut WorktreeContext, search: &mut better_diff::app::SearchState) {
+fn do_search(ctx: &mut WorktreeContext, search: &mut better_diff::app::SearchState) {
     let query = search.query.clone();
     if ui::ensure_active_file_layout(ctx) {
         search.matches = ctx.render_cache.layout.search(&query);
@@ -750,10 +743,7 @@ fn run_event_loop(
                                 }
                             }
                             KeyCode::Char('/') => {
-                                app.search.query.clear();
-                                app.search.matches.clear();
-                                app.search.current_match = 0;
-                                app.search.input_active = true;
+                                app.search.open();
                             }
                             KeyCode::Char('s') => {
                                 let ctx = app.active_context_mut();

@@ -35,6 +35,8 @@ pub struct RenderedLinePair {
 pub struct RenderedFileLayout {
     pub lines: Vec<RenderedLinePair>,
     pub hunk_start_offsets: Vec<usize>,
+    /// Pre-computed change flags for minimap (avoids per-frame allocation).
+    pub change_flags: Vec<bool>,
 }
 
 impl RenderedFileLayout {
@@ -169,16 +171,16 @@ fn render_side_by_side(
 
     let mut old_visible: Vec<Line> = rendered_lines
         .iter()
-        .map(|line| line.old.clone())
         .skip(scroll_offset)
         .take(visible_height)
+        .map(|line| line.old.clone())
         .collect();
 
     let mut new_visible: Vec<Line> = rendered_lines
         .iter()
-        .map(|line| line.new.clone())
         .skip(scroll_offset)
         .take(visible_height)
+        .map(|line| line.new.clone())
         .collect();
 
     // Apply hunk flash animation if active
@@ -219,7 +221,7 @@ fn render_side_by_side(
         Minimap::with_rendered_lines(
             scroll_offset,
             visible_height,
-            rendered_lines.iter().map(|line| line.is_changed).collect(),
+            &layout.change_flags,
             total_lines,
         ),
         minimap_area,
@@ -327,16 +329,7 @@ fn render_unified(
         if vis_idx >= visible_height || vis_idx >= visible.len() {
             continue;
         }
-        let is_current = match_idx == current_search_match;
-        let highlight_style = if is_current {
-            Style::default()
-                .bg(theme::current().ui_search_current_bg)
-                .fg(theme::current().ui_search_current_fg)
-        } else {
-            Style::default()
-                .bg(theme::current().ui_search_other_bg)
-                .fg(theme::current().ui_search_other_fg)
-        };
+        let highlight_style = search_match_style(match_idx == current_search_match);
         visible[vis_idx] = apply_search_highlight(
             visible[vis_idx].clone(),
             m.byte_start,
@@ -355,11 +348,25 @@ fn render_unified(
         Minimap::with_rendered_lines(
             scroll_offset,
             visible_height,
-            rendered_lines.iter().map(|line| line.is_changed).collect(),
+            &layout.change_flags,
             total_lines,
         ),
         minimap_area,
     );
+}
+
+/// Return the highlight style for a search match (current vs other).
+fn search_match_style(is_current: bool) -> Style {
+    let t = theme::current();
+    if is_current {
+        Style::default()
+            .bg(t.ui_search_current_bg)
+            .fg(t.ui_search_current_fg)
+    } else {
+        Style::default()
+            .bg(t.ui_search_other_bg)
+            .fg(t.ui_search_other_fg)
+    }
 }
 
 /// Apply hunk flash animation to visible lines.
@@ -406,16 +413,7 @@ fn apply_search_highlights(
         if m.line_index < scroll_offset || vis_idx >= visible_height {
             continue;
         }
-        let is_current = match_idx == current_search_match;
-        let highlight_style = if is_current {
-            Style::default()
-                .bg(theme::current().ui_search_current_bg)
-                .fg(theme::current().ui_search_current_fg)
-        } else {
-            Style::default()
-                .bg(theme::current().ui_search_other_bg)
-                .fg(theme::current().ui_search_other_fg)
-        };
+        let highlight_style = search_match_style(match_idx == current_search_match);
         if m.is_new_side {
             if vis_idx < new_visible.len() {
                 new_visible[vis_idx] = apply_search_highlight(
@@ -447,15 +445,6 @@ fn file_version_titles(file: &FileDiff, file_path: &str) -> (String, String) {
     (format!("old: {file_path}"), format!("new: {file_path}"))
 }
 
-/// Build parallel line lists for left (old) and right (new) panes from the file's hunks.
-///
-/// Returns `(old_lines, new_lines, hunk_start_offsets)` where `hunk_start_offsets[i]` is
-/// the index into the output lines where hunk `i` begins (at its `@@` header line).
-pub fn rendered_file_layout(file: &FileDiff, collapse_level: CollapseLevel) -> (usize, Vec<usize>) {
-    let layout = build_rendered_file_layout(file, &[], &[], collapse_level);
-    (layout.total_lines(), layout.hunk_start_offsets)
-}
-
 pub fn build_rendered_file_layout(
     file: &FileDiff,
     old_highlights: &[Vec<HighlightSpan>],
@@ -464,9 +453,11 @@ pub fn build_rendered_file_layout(
 ) -> RenderedFileLayout {
     let (lines, hunk_start_offsets) =
         build_side_by_side_rendered_lines(file, old_highlights, new_highlights, collapse_level);
+    let change_flags = lines.iter().map(|line| line.is_changed).collect();
     RenderedFileLayout {
         lines,
         hunk_start_offsets,
+        change_flags,
     }
 }
 

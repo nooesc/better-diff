@@ -244,9 +244,11 @@ fn file_title_with_status(file: &FileDiff, display_name: &str) -> String {
 }
 
 fn substitute_home(path: &Path) -> String {
-    if let Ok(home) = std::env::var("HOME") {
+    static HOME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let home = HOME.get_or_init(|| std::env::var("HOME").ok());
+    if let Some(home) = home {
         let path_str = path.to_string_lossy();
-        if let Some(rest) = path_str.strip_prefix(&home) {
+        if let Some(rest) = path_str.strip_prefix(home.as_str()) {
             return format!("~{rest}");
         }
     }

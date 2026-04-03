@@ -22,6 +22,7 @@ pub struct RenderCache {
     pub cached_layout_file_index: Option<usize>,
     pub cached_layout_collapse_level: Option<CollapseLevel>,
     pub layout: RenderedFileLayout,
+    #[cfg(test)]
     pub layout_rebuild_count: usize,
 }
 
@@ -34,6 +35,7 @@ impl RenderCache {
             cached_layout_file_index: None,
             cached_layout_collapse_level: None,
             layout: RenderedFileLayout::default(),
+            #[cfg(test)]
             layout_rebuild_count: 0,
         }
     }
@@ -47,7 +49,10 @@ impl RenderCache {
         self.cached_layout_file_index = None;
         self.cached_layout_collapse_level = None;
         self.layout = RenderedFileLayout::default();
-        self.layout_rebuild_count = 0;
+        #[cfg(test)]
+        {
+            self.layout_rebuild_count = 0;
+        }
     }
 
     pub fn ensure_layout(
@@ -66,7 +71,10 @@ impl RenderCache {
                 &self.new_highlights,
                 collapse_level,
             );
-            self.layout_rebuild_count = self.layout_rebuild_count.saturating_add(1);
+            #[cfg(test)]
+            {
+                self.layout_rebuild_count = self.layout_rebuild_count.saturating_add(1);
+            }
             self.cached_layout_file_index = Some(file_index);
             self.cached_layout_collapse_level = Some(collapse_level);
         }
@@ -349,6 +357,11 @@ impl SearchState {
         self.matches.clear();
         self.current_match = 0;
         self.input_active = false;
+    }
+
+    pub fn open(&mut self) {
+        self.clear();
+        self.input_active = true;
     }
 
     pub fn has_results(&self) -> bool {
