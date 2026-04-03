@@ -124,6 +124,21 @@ impl WorktreeContext {
         }
     }
 
+    /// Create a context from pre-parsed files (e.g., from stdin patch input).
+    pub fn from_files(files: Vec<FileDiff>) -> Self {
+        Self {
+            repo_path: PathBuf::from("."),
+            branch_label: String::from("stdin"),
+            mode: DiffMode::WorkingTree,
+            files,
+            active_file: 0,
+            scroll_offset: 0,
+            collapse_level: CollapseLevel::Scoped,
+            animation: None,
+            render_cache: RenderCache::new(),
+        }
+    }
+
     pub fn active_file(&self) -> Option<&FileDiff> {
         self.files.get(self.active_file)
     }

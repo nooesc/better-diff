@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use better_diff::app::{App, WorktreeContext};
 use better_diff::config::Config;
 use better_diff::diff::git2_provider::Git2Provider;
 use better_diff::diff::model::DiffMode;
+use better_diff::diff::patch_parser;
 use better_diff::ui;
 use better_diff::ui::animation::AnimationState;
 use better_diff::watcher::{WatchEvent, WatcherSet};
@@ -81,6 +83,23 @@ fn main() -> Result<()> {
         .or(config.theme.as_deref())
         .unwrap_or("dark");
     better_diff::theme::init(theme_name);
+
+    // Stdin pipe mode: read unified diff from stdin
+    if !std::io::stdin().is_terminal() {
+        let input = std::io::read_to_string(std::io::stdin())?;
+        let files = patch_parser::parse_patch(&input);
+        if files.is_empty() {
+            eprintln!("No diff content found on stdin.");
+            return Ok(());
+        }
+        let ctx = WorktreeContext::from_files(files);
+        if let Some(level) = config.collapse_level() {
+            // Apply collapse level to the stdin context below
+            let _ = level; // handled in app construction
+        }
+        return run_stdin_mode(ctx, &config);
+    }
+
     let repo_path = cli.path.canonicalize().unwrap_or(cli.path);
 
     // Discover all worktrees
@@ -142,6 +161,288 @@ fn main() -> Result<()> {
         &watch_rx,
         &mut watcher_set,
     )
+}
+
+/// Stdin-only mode: display parsed diff with no watchers or git integration.
+fn run_stdin_mode(mut ctx: WorktreeContext, config: &Config) -> Result<()> {
+    if let Some(level) = config.collapse_level() {
+        ctx.collapse_level = level;
+    }
+
+    let mut terminal = TerminalGuard::new()?;
+    let term = &mut terminal.terminal;
+
+    let mut search = better_diff::app::SearchState::default();
+
+    loop {
+        let visible_rows = content_visible_rows(term.size()?.height);
+
+        if ui::ensure_active_file_layout(&mut ctx) {
+            let total_lines = ctx.render_cache.layout.total_lines();
+            ctx.clamp_scroll_offset(total_lines, visible_rows);
+        } else {
+            ctx.scroll_offset = 0;
+        }
+
+        if event::poll(Duration::from_millis(50))? {
+            let mut needs_clamp = false;
+            match event::read()? {
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        for _ in 0..3 { ctx.scroll_down(); }
+                        needs_clamp = true;
+                    }
+                    MouseEventKind::ScrollUp => {
+                        for _ in 0..3 { ctx.scroll_up(); }
+                        needs_clamp = true;
+                    }
+                    _ => {}
+                },
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if search.input_active {
+                        match key.code {
+                            KeyCode::Esc => { search.clear(); }
+                            KeyCode::Enter => {
+                                search.input_active = false;
+                                if let Some(line) = search.current_line() {
+                                    ctx.scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Backspace => {
+                                search.query.pop();
+                                run_search_on_ctx(&mut ctx, &mut search);
+                            }
+                            KeyCode::Char(c) => {
+                                search.query.push(c);
+                                run_search_on_ctx(&mut ctx, &mut search);
+                                if let Some(line) = search.current_line() {
+                                    ctx.scroll_offset = line;
+                                    needs_clamp = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                if search.has_results() {
+                                    search.clear();
+                                } else {
+                                    return Ok(());
+                                }
+                            }
+                            KeyCode::Char('j') | KeyCode::Down => { ctx.scroll_down(); needs_clamp = true; }
+                            KeyCode::Char('k') | KeyCode::Up => { ctx.scroll_up(); needs_clamp = true; }
+                            KeyCode::Char('g') | KeyCode::Home => { ctx.scroll_to_top(); needs_clamp = true; }
+                            KeyCode::Char('G') | KeyCode::End => {
+                                if ui::ensure_active_file_layout(&mut ctx) {
+                                    let total = ctx.render_cache.layout.total_lines();
+                                    ctx.scroll_to_bottom(total, visible_rows);
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::PageDown => {
+                                let step = visible_rows.max(1).div_euclid(2).max(1);
+                                ctx.scroll_page_down(step);
+                                needs_clamp = true;
+                            }
+                            KeyCode::PageUp => {
+                                let step = visible_rows.max(1).div_euclid(2).max(1);
+                                ctx.scroll_page_up(step);
+                                needs_clamp = true;
+                            }
+                            KeyCode::Tab => { ctx.next_file(); needs_clamp = true; }
+                            KeyCode::BackTab => { ctx.prev_file(); needs_clamp = true; }
+                            KeyCode::Char('c') => { ctx.cycle_collapse(); needs_clamp = true; }
+                            KeyCode::Char('n') => {
+                                if search.has_results() {
+                                    search.next_match();
+                                    if let Some(line) = search.current_line() {
+                                        ctx.scroll_offset = line;
+                                        needs_clamp = true;
+                                    }
+                                } else if ui::ensure_active_file_layout(&mut ctx) {
+                                    let total = ctx.render_cache.layout.total_lines();
+                                    let starts = ctx.render_cache.layout.hunk_starts().to_vec();
+                                    ctx.next_hunk_with_offsets(&starts, total, visible_rows);
+                                    ctx.animation = Some(AnimationState::new());
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Char('N') => {
+                                if search.has_results() {
+                                    search.prev_match();
+                                    if let Some(line) = search.current_line() {
+                                        ctx.scroll_offset = line;
+                                        needs_clamp = true;
+                                    }
+                                } else if ui::ensure_active_file_layout(&mut ctx) {
+                                    let total = ctx.render_cache.layout.total_lines();
+                                    let starts = ctx.render_cache.layout.hunk_starts().to_vec();
+                                    ctx.prev_hunk_with_offsets(&starts, total, visible_rows);
+                                    ctx.animation = Some(AnimationState::new());
+                                    needs_clamp = true;
+                                }
+                            }
+                            KeyCode::Char('/') => {
+                                search.query.clear();
+                                search.matches.clear();
+                                search.current_match = 0;
+                                search.input_active = true;
+                            }
+                            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                                let index = (c as usize) - ('1' as usize);
+                                ctx.select_file(index);
+                                needs_clamp = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            if needs_clamp {
+                if ui::ensure_active_file_layout(&mut ctx) {
+                    let total = ctx.render_cache.layout.total_lines();
+                    ctx.clamp_scroll_offset(total, visible_rows);
+                }
+            }
+        }
+
+        // Render using a temporary read-only App-like view
+        let search_matches = search.matches.clone();
+        let current_match = search.current_match;
+        let search_active = search.input_active;
+        let search_query = search.query.clone();
+        let match_count = search.matches.len();
+
+        term.draw(|frame| {
+            render_stdin_view(frame, &mut ctx, &search_matches, current_match, search_active, &search_query, match_count);
+        })?;
+
+        if let Some(ref anim) = ctx.animation {
+            if anim.is_done() {
+                ctx.animation = None;
+            }
+        }
+    }
+}
+
+fn run_search_on_ctx(ctx: &mut WorktreeContext, search: &mut better_diff::app::SearchState) {
+    let query = search.query.clone();
+    if ui::ensure_active_file_layout(ctx) {
+        search.matches = ctx.render_cache.layout.search(&query);
+        search.current_match = 0;
+    }
+}
+
+fn render_stdin_view(
+    frame: &mut ratatui::Frame,
+    ctx: &mut WorktreeContext,
+    search_matches: &[better_diff::app::SearchMatch],
+    current_match: usize,
+    search_active: bool,
+    search_query: &str,
+    match_count: usize,
+) {
+    use ratatui::layout::{Constraint, Layout};
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Paragraph, Tabs};
+    use better_diff::theme;
+    use better_diff::diff::model::FileDiff;
+    use std::collections::HashMap;
+
+    let [tab_area, mode_area, content_area, status_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(frame.area());
+
+    // Tab bar
+    if ctx.files.is_empty() {
+        let no_changes = Paragraph::new(" No changes detected")
+            .style(Style::default().fg(theme::current().ui_dim));
+        frame.render_widget(no_changes, tab_area);
+    } else {
+        let base_name_of = |f: &FileDiff| -> String {
+            f.path.file_name()
+                .map_or_else(|| f.path.to_string_lossy().to_string(), |n| n.to_string_lossy().to_string())
+        };
+        let mut name_counts: HashMap<String, usize> = HashMap::new();
+        for file in &ctx.files {
+            *name_counts.entry(base_name_of(file)).or_insert(0) += 1;
+        }
+        let titles: Vec<String> = ctx.files.iter().map(|f| {
+            let base = base_name_of(f);
+            if name_counts.get(&base).is_some_and(|c| *c > 1) {
+                f.path.to_string_lossy().to_string()
+            } else {
+                base
+            }
+        }).collect();
+        let tabs = Tabs::new(titles)
+            .select(ctx.active_file)
+            .style(Style::default().fg(theme::current().ui_tab_inactive))
+            .highlight_style(Style::default().fg(theme::current().ui_tab_active).add_modifier(Modifier::BOLD))
+            .divider("│");
+        frame.render_widget(tabs, tab_area);
+    }
+
+    // Mode line
+    let mode_line = Line::from(vec![
+        Span::styled(" [stdin]", Style::default().fg(theme::current().ui_mode)),
+        Span::styled(format!("  {} file(s)", ctx.files.len()), Style::default().fg(theme::current().ui_dim)),
+    ]);
+    frame.render_widget(Paragraph::new(mode_line), mode_area);
+
+    // Content
+    if ctx.files.get(ctx.active_file).is_some() && ui::ensure_active_file_layout(ctx) {
+        let layout = &ctx.render_cache.layout;
+        let file = &ctx.files[ctx.active_file];
+        better_diff::ui::split_pane::render_split_pane(
+            frame, content_area, file, ctx.scroll_offset, ctx.animation.as_ref(),
+            layout, search_matches, current_match,
+        );
+    } else {
+        use ratatui::widgets::{Block, Borders};
+        let content = Paragraph::new("No changes to display").block(
+            Block::default().borders(Borders::ALL).title("Diff View"),
+        );
+        frame.render_widget(content, content_area);
+    }
+
+    // Status bar
+    let key = Style::default().fg(theme::current().ui_key_hint);
+    let dim = Style::default().fg(theme::current().ui_dim);
+    let mut status_spans = vec![];
+    if search_active {
+        status_spans.push(Span::styled(" /", Style::default().fg(theme::current().ui_mode)));
+        status_spans.push(Span::styled(search_query.to_string(), Style::default().fg(theme::current().ui_search_other_fg)));
+        status_spans.push(Span::styled("▎", Style::default().fg(theme::current().ui_mode)));
+        if match_count > 0 {
+            status_spans.push(Span::styled(format!(" [{}/{}]", current_match + 1, match_count), key));
+        }
+    } else {
+        if !search_query.is_empty() && match_count > 0 {
+            status_spans.push(Span::styled(
+                format!(" /{} [{}/{}]", search_query, current_match + 1, match_count), key,
+            ));
+        }
+        status_spans.extend([
+            Span::styled(" [q]", key), Span::styled("uit ", dim),
+            Span::styled("[Tab]", key), Span::styled(" next file ", dim),
+            Span::styled("[n/N]", key), Span::styled(" hunks/search ", dim),
+            Span::styled("[c]", key), Span::styled("ollapse ", dim),
+            Span::styled("[/]", key), Span::styled("search", dim),
+        ]);
+    }
+    let status_line = Line::from(status_spans);
+    frame.render_widget(Paragraph::new(status_line), status_area);
 }
 
 fn run_event_loop(
