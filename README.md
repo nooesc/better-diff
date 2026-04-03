@@ -14,6 +14,7 @@ A Rust TUI program for visualizing git diffs with novel visualization features.
 - **Change animations** — subtle transitions on hunk focus
 - **Syntax highlighting** — tree-sitter powered for Rust, JavaScript/JSX, TypeScript/TSX, Python, and Lua
 - **Live mode** — auto-follows file changes across worktrees, scrolls to the first hunk (great for watching agents work)
+- **Theming** — dark, light, and monokai themes (config or `--theme` flag)
 - **Two modes** — working tree vs HEAD, staged vs HEAD
 - **Filesystem watching** — near-real-time updates via `notify`
 - **Git worktree support** — switch between worktrees with `]`
@@ -45,6 +46,9 @@ better-diff /path/to/repo
 
 # Start in live mode (auto-follow file changes)
 better-diff --live
+
+# Use a different theme
+better-diff --theme monokai
 
 # Generate shell completions
 better-diff --completions zsh > ~/.zsh/completions/_better-diff
@@ -108,6 +112,9 @@ staged = false
 
 # Default collapse level: "tight", "scoped", or "expanded"
 collapse = "scoped"
+
+# Color theme: "dark", "light", or "monokai"
+theme = "dark"
 ```
 
 CLI flags always override config file values.

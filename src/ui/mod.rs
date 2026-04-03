@@ -5,7 +5,7 @@ pub mod split_pane;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Tabs},
 };
@@ -13,6 +13,7 @@ use ratatui::{
 use crate::app::{App, WorktreeContext};
 use crate::diff::model::{DiffMode, FileStatus, FileDiff};
 use crate::syntax::highlight_file;
+use crate::theme;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -57,7 +58,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // --- Tab bar ---
     if ctx.files.is_empty() {
         let no_changes = Paragraph::new(" No changes detected")
-            .style(Style::default().fg(Color::DarkGray));
+            .style(Style::default().fg(theme::current().ui_dim));
         frame.render_widget(no_changes, tab_area);
     } else {
         let base_name_of = |f: &FileDiff| -> String {
@@ -89,10 +90,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             .collect();
         let tabs = Tabs::new(titles)
             .select(ctx.active_file)
-            .style(Style::default().fg(Color::DarkGray))
+            .style(Style::default().fg(theme::current().ui_tab_inactive))
             .highlight_style(
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(theme::current().ui_tab_active)
                     .add_modifier(Modifier::BOLD),
             )
             .divider("│");
@@ -119,9 +120,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     };
     let file_count = format!("  {} file(s)", ctx.files.len());
     let mode_line = Line::from(vec![
-        Span::styled(mode_label, Style::default().fg(Color::Cyan)),
-        Span::styled(branch_label, Style::default().fg(Color::Cyan)),
-        Span::styled(file_count, Style::default().fg(Color::DarkGray)),
+        Span::styled(mode_label, Style::default().fg(theme::current().ui_mode)),
+        Span::styled(branch_label, Style::default().fg(theme::current().ui_mode)),
+        Span::styled(file_count, Style::default().fg(theme::current().ui_dim)),
     ]);
     frame.render_widget(Paragraph::new(mode_line), mode_area);
 
@@ -149,30 +150,30 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // --- Status bar ---
-    let key = Style::default().fg(Color::Yellow);
-    let dim = Style::default().fg(Color::DarkGray);
+    let key = Style::default().fg(theme::current().ui_key_hint);
+    let dim = Style::default().fg(theme::current().ui_dim);
     let mut status_spans = vec![];
     if search_input_active {
-        status_spans.push(Span::styled(" /", Style::default().fg(Color::Cyan)));
+        status_spans.push(Span::styled(" /", Style::default().fg(theme::current().ui_mode)));
         status_spans.push(Span::styled(
             search_query.clone(),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme::current().ui_search_other_fg),
         ));
-        status_spans.push(Span::styled("▎", Style::default().fg(Color::Cyan)));
+        status_spans.push(Span::styled("▎", Style::default().fg(theme::current().ui_mode)));
         if search_match_count > 0 {
             status_spans.push(Span::styled(
                 format!(" [{}/{}]", current_search_match + 1, search_match_count),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme::current().ui_key_hint),
             ));
         }
     } else {
     if live_mode {
-        status_spans.push(Span::styled(" LIVE ", Style::default().fg(Color::Green)));
+        status_spans.push(Span::styled(" LIVE ", Style::default().fg(theme::current().ui_live)));
     }
     if !search_query.is_empty() && search_match_count > 0 {
         status_spans.push(Span::styled(
             format!(" /{} [{}/{}]", search_query, current_search_match + 1, search_match_count),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme::current().ui_key_hint),
         ));
     }
     status_spans.extend([

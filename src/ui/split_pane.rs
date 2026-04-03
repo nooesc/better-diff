@@ -13,6 +13,7 @@ use crate::diff::model::{
     ChangeKind, CollapseLevel, DiffLine, FileDiff, FileStatus, FoldRegion, LineKind, MoveMatch,
 };
 use crate::syntax::HighlightSpan;
+use crate::theme;
 use crate::ui::animation::AnimationState;
 use super::minimap::Minimap;
 
@@ -175,9 +176,9 @@ pub fn render_split_pane(
         }
         let is_current = match_idx == current_search_match;
         let highlight_style = if is_current {
-            Style::default().bg(Color::Yellow).fg(Color::Black)
+            Style::default().bg(theme::current().ui_search_current_bg).fg(theme::current().ui_search_current_fg)
         } else {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
+            Style::default().bg(theme::current().ui_search_other_bg).fg(theme::current().ui_search_other_fg)
         };
         if m.is_new_side {
             if vis_idx < new_visible.len() {
@@ -272,7 +273,7 @@ fn build_side_by_side_rendered_lines(
     let mut rendered_lines: Vec<RenderedLinePair> = Vec::new();
     let mut hunk_start_offsets: Vec<usize> = Vec::new();
 
-    let fold_style = Style::new().fg(Color::DarkGray).add_modifier(Modifier::ITALIC);
+    let fold_style = Style::new().fg(theme::current().ui_fold).add_modifier(Modifier::ITALIC);
 
     // Build move-detection lookup maps.
     let mut move_source_starts: HashMap<usize, &MoveMatch> = HashMap::new();
@@ -324,7 +325,7 @@ fn build_side_by_side_rendered_lines(
             "@@ -{},{} +{},{} @@",
             hunk.old_start, hunk.old_lines, hunk.new_start, hunk.new_lines
         );
-        let header_style = Style::default().fg(Color::DarkGray);
+        let header_style = Style::default().fg(theme::current().ui_header);
         rendered_lines.push(rendered_line(
             Line::from(Span::styled(header.clone(), header_style)),
             Line::from(Span::styled(header, header_style)),
@@ -398,7 +399,7 @@ fn build_hunk_lines(
     new_highlights: &[Vec<HighlightSpan>],
     moves: &MoveContext<'_>,
 ) -> Vec<RenderedLinePair> {
-    let move_style = Style::default().fg(Color::Magenta);
+    let move_style = Style::default().fg(theme::current().ui_move);
     let empty_line = || Line::from(Span::raw(String::new()));
     let mut result = Vec::new();
     let mut i = 0;
@@ -412,7 +413,7 @@ fn build_hunk_lines(
                 let text = line.old_str();
 
                 let mut old_spans = vec![
-                    Span::styled(line_no, Style::default().fg(Color::DarkGray)),
+                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
                 ];
                 old_spans.extend(apply_syntax_highlights(
                     text,
@@ -423,7 +424,7 @@ fn build_hunk_lines(
 
                 let new_line_no = format_line_no(line.new_line_no);
                 let mut new_spans = vec![
-                    Span::styled(new_line_no, Style::default().fg(Color::DarkGray)),
+                    Span::styled(new_line_no, Style::default().fg(theme::current().ui_line_number)),
                 ];
                 new_spans.extend(apply_syntax_highlights(
                     text,
@@ -461,12 +462,12 @@ fn build_hunk_lines(
                 let line_no = format_line_no(line.new_line_no);
                 let text = line.new_str();
                 let new_line = Line::from(vec![
-                    Span::styled(line_no, Style::default().fg(Color::DarkGray)),
+                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
                     Span::styled(
                         text.to_string(),
                         Style::default()
-                            .fg(Color::Green)
-                            .bg(Color::Rgb(0, 40, 0)),
+                            .fg(theme::current().diff_add_fg)
+                            .bg(theme::current().diff_add_bg),
                     ),
                 ]);
 
@@ -517,12 +518,12 @@ fn build_hunk_lines(
                 let line_no = format_line_no(line.old_line_no);
                 let text = line.old_str();
                 let old_line = Line::from(vec![
-                    Span::styled(line_no, Style::default().fg(Color::DarkGray)),
+                    Span::styled(line_no, Style::default().fg(theme::current().ui_line_number)),
                     Span::styled(
                         text.to_string(),
                         Style::default()
-                            .fg(Color::Red)
-                            .bg(Color::Rgb(40, 0, 0)),
+                            .fg(theme::current().diff_del_fg)
+                            .bg(theme::current().diff_del_bg),
                     ),
                 ]);
 
@@ -580,17 +581,17 @@ fn build_hunk_lines(
                     let new_text = line.new_str();
 
                     let old_line = Line::from(vec![
-                        Span::styled(old_line_no, Style::default().fg(Color::DarkGray)),
+                        Span::styled(old_line_no, Style::default().fg(theme::current().ui_line_number)),
                         Span::styled(
                             old_text.to_string(),
-                            Style::default().fg(Color::Red),
+                            Style::default().fg(theme::current().diff_del_fg),
                         ),
                     ]);
                     let new_line = Line::from(vec![
-                        Span::styled(new_line_no, Style::default().fg(Color::DarkGray)),
+                        Span::styled(new_line_no, Style::default().fg(theme::current().ui_line_number)),
                         Span::styled(
                             new_text.to_string(),
-                            Style::default().fg(Color::Green),
+                            Style::default().fg(theme::current().diff_add_fg),
                         ),
                     ]);
 
@@ -865,25 +866,26 @@ enum Side {
 
 /// Build a token-highlighted line for a Modified line on the given side.
 fn build_token_line(line: &DiffLine, side: Side) -> Line<'static> {
+    let t = theme::current();
     let (line_no, eq_bg, primary_kind, primary_fg, primary_bg) = match side {
         Side::Old => (
             line.old_line_no,
-            Color::Rgb(40, 0, 0),
+            t.diff_del_bg,
             ChangeKind::Deletion,
-            Color::Red,
-            Color::Rgb(80, 0, 0),
+            t.diff_del_fg,
+            t.diff_del_token_bg,
         ),
         Side::New => (
             line.new_line_no,
-            Color::Rgb(0, 40, 0),
+            t.diff_add_bg,
             ChangeKind::Addition,
-            Color::Green,
-            Color::Rgb(0, 80, 0),
+            t.diff_add_fg,
+            t.diff_add_token_bg,
         ),
     };
 
     let line_no_str = format_line_no(line_no);
-    let mut spans = vec![Span::styled(line_no_str, Style::default().fg(Color::DarkGray))];
+    let mut spans = vec![Span::styled(line_no_str, Style::default().fg(theme::current().ui_line_number))];
 
     for token in &line.tokens {
         let style = if token.kind == ChangeKind::Equal {

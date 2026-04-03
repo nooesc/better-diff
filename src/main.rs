@@ -32,6 +32,9 @@ struct Cli {
 
     #[arg(long, help = "Compare two refs (e.g., main..feature, HEAD~3..HEAD)")]
     compare: Option<String>,
+
+    #[arg(long, help = "Color theme (dark, light, monokai)")]
+    theme: Option<String>,
 }
 
 struct TerminalGuard {
@@ -74,6 +77,10 @@ fn main() -> Result<()> {
     }
 
     let config = Config::load();
+    let theme_name = cli.theme.as_deref()
+        .or(config.theme.as_deref())
+        .unwrap_or("dark");
+    better_diff::theme::init(theme_name);
     let repo_path = cli.path.canonicalize().unwrap_or(cli.path);
 
     // Discover all worktrees

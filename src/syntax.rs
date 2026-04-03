@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 use std::path::Path;
 
-use ratatui::style::{Color, Style};
+use ratatui::style::Style;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 #[derive(Debug, Clone)]
@@ -409,14 +409,15 @@ fn syntax_query(language: HighlightLanguage) -> &'static Query {
 
 /// Map a capture name to a syntax highlighting style.
 fn style_for_capture(name: &str) -> Option<Style> {
+    let t = crate::theme::current();
     match name {
-        "comment" => Some(Style::default().fg(Color::DarkGray)),
-        "string" => Some(Style::default().fg(Color::Rgb(206, 145, 120))),
-        "number" | "boolean" => Some(Style::default().fg(Color::Rgb(181, 206, 168))),
-        "type" => Some(Style::default().fg(Color::Rgb(78, 201, 176))),
-        "keyword" => Some(Style::default().fg(Color::Rgb(197, 134, 192))),
-        "function" | "function_call" => Some(Style::default().fg(Color::Rgb(220, 220, 170))),
-        "macro" => Some(Style::default().fg(Color::Rgb(86, 156, 214))),
+        "comment" => Some(Style::default().fg(t.syntax_comment)),
+        "string" => Some(Style::default().fg(t.syntax_string)),
+        "number" | "boolean" => Some(Style::default().fg(t.syntax_number)),
+        "type" => Some(Style::default().fg(t.syntax_type)),
+        "keyword" => Some(Style::default().fg(t.syntax_keyword)),
+        "function" | "function_call" => Some(Style::default().fg(t.syntax_function)),
+        "macro" => Some(Style::default().fg(t.syntax_macro)),
         _ => None,
     }
 }
@@ -533,6 +534,7 @@ fn highlight_from_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::style::Color;
 
     #[test]
     fn test_highlight_rust_basic() {
