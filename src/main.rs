@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use git2::Repository;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
 
@@ -25,6 +25,9 @@ struct Cli {
 
     #[arg(long, help = "Start in live mode (auto-follow file changes)")]
     live: bool,
+
+    #[arg(long, value_enum, help = "Generate shell completions")]
+    completions: Option<clap_complete::Shell>,
 }
 
 struct TerminalGuard {
@@ -55,6 +58,17 @@ impl Drop for TerminalGuard {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    if let Some(shell) = cli.completions {
+        clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            "better-diff",
+            &mut std::io::stdout(),
+        );
+        return Ok(());
+    }
+
     let repo_path = cli.path.canonicalize().unwrap_or(cli.path);
 
     // Discover all worktrees
