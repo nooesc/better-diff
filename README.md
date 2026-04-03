@@ -56,9 +56,10 @@ better-diff --completions zsh > ~/.zsh/completions/_better-diff
 |---|---|
 | `j`/`k` or arrows | Scroll line by line |
 | `PgUp`/`PgDn` | Scroll by half page |
-| `n`/`N` | Jump to next/previous hunk |
+| `n`/`N` | Next/previous hunk (or search match) |
 | `g`/`G` | Jump to top/bottom |
 | `Home`/`End` | Jump to top/bottom |
+| `/` | Search (case-insensitive, live results) |
 | `Tab`/`Shift+Tab` | Next/previous file |
 | `1-9` | Jump to file by number |
 | `s` / `w` | Staged / working tree mode |
