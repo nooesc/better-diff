@@ -95,6 +95,23 @@ Syntax highlighting is automatic based on file extension:
 
 Also highlights `Dockerfile`, `Containerfile`, `Makefile`, and `GNUmakefile` by name.
 
+## Configuration
+
+Create `~/.config/better-diff/config.toml` to set defaults:
+
+```toml
+# Start in live mode by default
+live = false
+
+# Default to staged view
+staged = false
+
+# Default collapse level: "tight", "scoped", or "expanded"
+collapse = "scoped"
+```
+
+CLI flags always override config file values.
+
 ## Built With
 
 - [Ratatui](https://ratatui.rs/) — TUI framework

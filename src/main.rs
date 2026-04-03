@@ -7,6 +7,7 @@ use git2::Repository;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind};
 
 use better_diff::app::{App, WorktreeContext};
+use better_diff::config::Config;
 use better_diff::diff::git2_provider::Git2Provider;
 use better_diff::diff::model::DiffMode;
 use better_diff::ui;
@@ -72,6 +73,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let config = Config::load();
     let repo_path = cli.path.canonicalize().unwrap_or(cli.path);
 
     // Discover all worktrees
@@ -95,14 +97,21 @@ fn main() -> Result<()> {
         .position(|p| p.canonicalize().unwrap_or_else(|_| p.clone()) == repo_path)
         .unwrap_or(0);
 
-    // Apply CLI mode to the initially active worktree
+    // Apply CLI mode to the initially active worktree (CLI flags override config)
     if let Some(compare) = cli.compare {
         let (from_ref, to_ref) = parse_ref_range(&compare);
         contexts[active_worktree].mode = DiffMode::Commits { from_ref, to_ref };
         contexts[active_worktree].recompute(&provider)?;
-    } else if cli.staged {
+    } else if cli.staged || config.staged {
         contexts[active_worktree].mode = DiffMode::Staged;
         contexts[active_worktree].recompute(&provider)?;
+    }
+
+    // Apply config collapse level
+    if let Some(level) = config.collapse_level() {
+        for ctx in &mut contexts {
+            ctx.collapse_level = level;
+        }
     }
 
     // Start watchers for all worktrees + .git/worktrees/
@@ -114,7 +123,7 @@ fn main() -> Result<()> {
         active_worktree,
         should_quit: false,
         manager,
-        live_mode: cli.live,
+        live_mode: cli.live || config.live,
         search: Default::default(),
     };
 
